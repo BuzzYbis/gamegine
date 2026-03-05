@@ -37,9 +37,9 @@ KeepEmptyLinesAtTheStartOfBlocks: false
 PenaltyBreakBeforeFirstCallParameter: 25
 PenaltyBreakAssignment: 100
 PointerAlignment: Left
-ReflowComments: true
+ReflowComments: Always
 SortIncludes: CaseInsensitive
 SpaceBeforeCpp11BracedList: false
 SpacesBeforeTrailingComments: 2
-Standard: Cpp03
+Standard: c++03
 TabWidth: 4

@@ -10,11 +10,12 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 set(GAMEGINE_ROOT ${CMAKE_CURRENT_LIST_DIR})
-add_subdirectory(core)
-add_subdirectory(example)
 
-add_custom_target(engine)
-add_dependencies(engine core)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/deps/vulkan_headers.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/deps/entt.cmake)
+
+add_subdirectory(engine)
+add_subdirectory(game)
 
 add_custom_target(example)
-add_dependencies(example engine gamegine_example)
+add_dependencies(example engine example_gamegine)
