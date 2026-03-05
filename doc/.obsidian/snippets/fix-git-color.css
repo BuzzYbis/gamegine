@@ -1,0 +1,29 @@
+/* --- FIX TOTAL POUR OBSIDIAN GIT --- */
+
+/* 1. Corrige le texte des fichiers */
+.workspace-leaf-content[data-type="git-view"] .tree-item-self,
+.workspace-leaf-content[data-type="git-view"] .tree-item-inner {
+    color: var(--text-normal) !important;
+}
+
+/* 2. Corrige les boutons d'en-tête (Push, Pull, Commit, Refresh) */
+.workspace-leaf-content[data-type="git-view"] .nav-action-button {
+    color: var(--text-normal) !important;
+    opacity: 1 !important;
+    /* Force la visibilité si le thème réduit l'opacité */
+}
+
+/* 3. Corrige les icônes à côté des fichiers (+, -, fichier modifié) */
+.workspace-leaf-content[data-type="git-view"] .tree-item-icon {
+    color: var(--text-normal) !important;
+}
+
+/* 4. Force brute pour les SVG récalcitrants (au cas où) */
+.workspace-leaf-content[data-type="git-view"] svg {
+    box-shadow: none;
+    color: var(--text-normal);
+}
+
+.anp-full-rainbow-color-toggle .nav-files-container>div>.nav-folder .nav-folder-children {
+    border-color: var(--text-normal);
+}
