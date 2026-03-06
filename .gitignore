@@ -55,3 +55,8 @@ _deps
 
 /cmake-build-debug/
 /build/
+
+# IDE 
+.zed 
+.idea
+.vscode
