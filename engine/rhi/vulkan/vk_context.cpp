@@ -400,9 +400,19 @@ bool VulkanContext::createLogicalDevice()
 
         // Setup base features (samplerAnisotropy)
         vk::PhysicalDeviceFeatures2 baseFeatures{};
-        if (supportedFeatures.get<vk::PhysicalDeviceFeatures2>()
-                .features.samplerAnisotropy) {
+        const auto&                 supportedFeatures2 =
+            supportedFeatures.get<vk::PhysicalDeviceFeatures2>();
+
+        if (supportedFeatures2.features.samplerAnisotropy) {
             baseFeatures.features.samplerAnisotropy = VK_TRUE;
+        }
+
+        // By default, Vulkan only draws filled triangles
+        // (VK_POLYGON_MODE_FILL) but since we implement the "WireFrame"
+        // pipeline to draw the edges of a model we need to enable
+        // VK_POLYGON_MODE_LINE
+        if (supportedFeatures2.features.fillModeNonSolid) {
+            baseFeatures.features.fillModeNonSolid = VK_TRUE;
         }
 
         // Manually set up the pNext chain to ensure it's correct
