@@ -59,7 +59,6 @@ class Renderer {
     std::unique_ptr<rhi::vulkan::VulkanContext>     d_context;
     std::unique_ptr<rhi::vulkan::VulkanSwapchain>   d_swapchain;
     std::unique_ptr<rhi::vulkan::DescriptorManager> d_descriptorManager;
-    std::unique_ptr<rhi::vulkan::VulkanPipeline>    d_pipeline;
     std::unique_ptr<CommandPool>                    d_commandPool;
 
     RenderTarget d_renderTarget;
@@ -75,6 +74,10 @@ class Renderer {
     uint32_t d_currentFrame = 0;  // CPU frame index (for sync objects)
     uint32_t d_imageIndex   = 0;  // GPU image index (from swapchain)
 
+    std::unordered_map<std::string,
+                       std::unique_ptr<rhi::vulkan::VulkanPipeline> >
+        d_pipelines;
+
   private:
     // PRIVATE MANIPULATORS
 
@@ -88,6 +91,8 @@ class Renderer {
                                         vk::PipelineStageFlags2 src_stage_mask,
                                         vk::PipelineStageFlags2 dst_stage_mask,
                                         vk::ImageAspectFlags    aspect_flags);
+
+    void createPipelines();
 
   public:
     // CREATORS
@@ -113,6 +118,8 @@ class Renderer {
     void createRenderTarget();
 
     void beginSwapchainPass(vk::CommandBuffer cmd);
+
+    [[nodiscard]] rhi::vulkan::VulkanPipeline* getPipeline(const std::string& name) const;
 
     // ACCESSORS
 

@@ -32,13 +32,12 @@ void Engine::initialize(const char* title, const int width, const int height)
 
     d_assetManager = std::make_unique<asset::AssetManager>(
         d_renderer->context(),
-        d_renderer->swapchain()->format(),
-        d_renderer->swapchain()->depthFormat(),
-        d_renderer->descriptorSetLayout());
+        d_renderer->descriptorSetLayout(),
+        d_renderer.get());
     d_scene         = std::make_unique<scene::Scene>();
     d_systemManager = std::make_unique<scene::SystemManager>();
+    d_inputManager  = std::make_unique<InputManager>();
 
-    d_inputManager = std::make_unique<InputManager>();
     // Setup binding keys
     d_inputManager->bindKey(GLFW_KEY_W, InputAction::MOVE_FORWARD);
     d_inputManager->bindKey(GLFW_KEY_S, InputAction::MOVE_BACKWARD);

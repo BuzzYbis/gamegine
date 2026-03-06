@@ -46,7 +46,8 @@ vk::raii::ShaderModule createShaderModule(const vk::raii::Device&  device,
 VulkanPipeline::VulkanPipeline(VulkanContext&          context,
                                vk::Format              swapchainFormat,
                                vk::Format              depthFormat,
-                               vk::DescriptorSetLayout descriptorSetLayout)
+                               vk::DescriptorSetLayout descriptorSetLayout,
+                               const PipelineConfig&   config)
 : d_context(context)
 {
     // Read shader code
@@ -101,8 +102,8 @@ VulkanPipeline::VulkanPipeline(VulkanContext&          context,
     vk::PipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.depthClampEnable        = vk::False;
     rasterizer.rasterizerDiscardEnable = vk::False;
-    rasterizer.polygonMode             = vk::PolygonMode::eFill;
-    rasterizer.cullMode                = vk::CullModeFlagBits::eBack;
+    rasterizer.polygonMode             = config.polygonMode;
+    rasterizer.cullMode                = config.cullMode;
     rasterizer.frontFace               = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable         = vk::False;
     rasterizer.depthBiasSlopeFactor    = 1.0f;
@@ -113,11 +114,24 @@ VulkanPipeline::VulkanPipeline(VulkanContext&          context,
     multisampling.sampleShadingEnable  = vk::False;
 
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.blendEnable    = vk::False;
     colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
                                           vk::ColorComponentFlagBits::eG |
                                           vk::ColorComponentFlagBits::eB |
                                           vk::ColorComponentFlagBits::eA;
+
+    if (config.enableBlending) {
+        colorBlendAttachment.blendEnable         = true;
+        colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        colorBlendAttachment.dstColorBlendFactor =
+            vk::BlendFactor::eOneMinusSrcAlpha;
+        colorBlendAttachment.colorBlendOp        = vk::BlendOp::eAdd;
+        colorBlendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        colorBlendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+        colorBlendAttachment.alphaBlendOp        = vk::BlendOp::eAdd;
+    }
+    else {
+        colorBlendAttachment.blendEnable = false;
+    }
 
     vk::PipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.logicOpEnable   = vk::False;
@@ -135,8 +149,8 @@ VulkanPipeline::VulkanPipeline(VulkanContext&          context,
     // Depth stencil state (required if depthFormat is provided)
     vk::PipelineDepthStencilStateCreateInfo depthStencil{};
     if (depthFormat != vk::Format::eUndefined) {
-        depthStencil.depthTestEnable       = vk::True;
-        depthStencil.depthWriteEnable      = vk::True;
+        depthStencil.depthTestEnable       = config.enableDepthTest;
+        depthStencil.depthWriteEnable      = config.enableDepthWrite;
         depthStencil.depthCompareOp        = vk::CompareOp::eLess;
         depthStencil.depthBoundsTestEnable = vk::False;
         depthStencil.stencilTestEnable     = vk::False;

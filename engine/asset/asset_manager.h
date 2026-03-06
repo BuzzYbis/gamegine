@@ -5,6 +5,7 @@
 // renderer
 #include <renderer/material.h>
 #include <renderer/mesh.h>
+#include <renderer/renderer.h>
 #include <renderer/texture.h>
 
 // rhi
@@ -42,16 +43,14 @@ class AssetManager {
 
     std::unordered_map<std::string, LoadedModel> d_models;
 
-    vk::Format              d_defaultColorFormat;
-    vk::Format              d_defaultDepthFormat;
     vk::DescriptorSetLayout d_defaultSetLayout;
+    renderer::Renderer*     d_renderer;
 
   public:
     // CREATORS
     explicit AssetManager(rhi::vulkan::VulkanContext& context,
-                          vk::Format                  defaultColorFormat,
-                          vk::Format                  defaultDepthFormat,
-                          vk::DescriptorSetLayout     defaultSetLayout);
+                          vk::DescriptorSetLayout     defaultSetLayout,
+                          renderer::Renderer*         renderer);
     ~AssetManager() = default;
 
     // MANIPULATORS
@@ -60,9 +59,7 @@ class AssetManager {
     renderer::Texture* loadMaterial(const std::string& filePath);
 
     // Creates a new material.
-    renderer::Material* createMaterial(vk::Format              colorFormat,
-                                       vk::Format              depthFormat,
-                                       vk::DescriptorSetLayout setLayout);
+    renderer::Material* createMaterial();
 
     // Loads a mesh and returns a shared pointer to it.
     LoadedModel loadMesh(const std::string& filePath);

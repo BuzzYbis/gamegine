@@ -6,21 +6,17 @@
 #include <asset/model_data.h>
 
 // std
-#include "core/log.h"
-
 #include <filesystem>
 #include <iostream>
 
 namespace engine::asset {
 AssetManager::AssetManager(rhi::vulkan::VulkanContext&   context,
-                           const vk::Format              defaultColorFormat,
-                           const vk::Format              defaultDepthFormat,
-                           const vk::DescriptorSetLayout defaultSetLayout)
+                           const vk::DescriptorSetLayout defaultSetLayout,
+                           renderer::Renderer*           renderer)
 : d_context(context)
-, d_defaultColorFormat(defaultColorFormat)
-, d_defaultDepthFormat(defaultDepthFormat)
-, d_defaultSetLayout(defaultSetLayout)
 , d_transferCommandPool(nullptr)
+, d_defaultSetLayout(defaultSetLayout)
+, d_renderer(renderer)
 {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eTransient;
@@ -48,17 +44,15 @@ renderer::Texture* AssetManager::loadMaterial(const std::string& filePath)
     return texturePtr;
 }
 
-renderer::Material*
-AssetManager::createMaterial(vk::Format              colorFormat,
-                             vk::Format              depthFormat,
-                             vk::DescriptorSetLayout setLayout)
+renderer::Material* AssetManager::createMaterial()
 {
-    auto material = std::make_unique<renderer::Material>(d_context,
-                                                         colorFormat,
-                                                         depthFormat,
-                                                         setLayout);
+    auto material = std::make_unique<renderer::Material>();
 
     renderer::Material* materialPtr = material.get();
+
+    std::string targetPipeline = "PBR_Opaque";
+
+    materialPtr->setPipeline(d_renderer->getPipeline(targetPipeline));
     d_materials.push_back(std::move(material));
 
     return materialPtr;
@@ -108,11 +102,9 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
 
     std::vector<renderer::Material*> uniqueMaterials;
     for (const auto& [name, diffuseTexturePath] : data->materials) {
-        renderer::Material* mat = createMaterial(d_defaultColorFormat,
-                                                 d_defaultDepthFormat,
-                                                 d_defaultSetLayout);
+        renderer::Material* mat = createMaterial();
+        renderer::Texture*  tex = nullptr;
 
-        renderer::Texture* tex = nullptr;
         if (!diffuseTexturePath.empty()) {
             tex = loadMaterial(diffuseTexturePath);
         }

@@ -10,6 +10,14 @@
 
 namespace engine::rhi::vulkan {
 
+struct PipelineConfig {
+    vk::PolygonMode   polygonMode      = vk::PolygonMode::eFill;
+    vk::CullModeFlags cullMode         = vk::CullModeFlagBits::eBack;
+    bool              enableDepthTest  = true;
+    bool              enableDepthWrite = true;
+    bool              enableBlending   = false;
+};
+
 // --------------------
 // class VulkanPipeline
 // --------------------
@@ -26,7 +34,8 @@ class VulkanPipeline {
     VulkanPipeline(VulkanContext&          context,
                    vk::Format              swapchainFormat,
                    vk::Format              depthFormat,
-                   vk::DescriptorSetLayout descriptorSetLayout);
+                   vk::DescriptorSetLayout descriptorSetLayout,
+                   const PipelineConfig&   config = PipelineConfig());
 
     // ACCESSORS
 

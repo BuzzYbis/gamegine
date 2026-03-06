@@ -86,11 +86,8 @@ bool Renderer::initialize(const bool enableValidationLayers)
         d_descriptorSetLayout,
         sizeof(UniformBufferObject));
 
-    d_pipeline = std::make_unique<rhi::vulkan::VulkanPipeline>(
-        *d_context,
-        d_swapchain->format(),
-        d_swapchain->depthFormat(),
-        *d_descriptorSetLayout);
+    createPipelines();
+
     // Command Pool (memory gestion for the buffers)
     d_commandPool = std::make_unique<CommandPool>(*d_context);
     // Allocate Command Buffers (one per swapchain image)
@@ -580,6 +577,50 @@ void Renderer::transition_image_layout(
     dependency_info.imageMemoryBarrierCount = 1;
     dependency_info.pImageMemoryBarriers    = &barrier;
     commandBuffer.pipelineBarrier2(dependency_info);
+}
+
+void Renderer::createPipelines()
+{
+    d_pipelines["PBR_Opaque"] = std::make_unique<rhi::vulkan::VulkanPipeline>(
+        *d_context,
+        d_swapchain->format(),
+        d_swapchain->depthFormat(),
+        *d_descriptorSetLayout);
+
+    rhi::vulkan::PipelineConfig wireframeConfig{};
+    wireframeConfig.polygonMode = vk::PolygonMode::eLine;
+    wireframeConfig.cullMode    = vk::CullModeFlagBits::eNone;
+
+    d_pipelines["Wireframe"] = std::make_unique<rhi::vulkan::VulkanPipeline>(
+        *d_context,
+        d_swapchain->format(),
+        d_swapchain->depthFormat(),
+        *d_descriptorSetLayout,
+        wireframeConfig);
+
+    rhi::vulkan::PipelineConfig transparentConfig{};
+    transparentConfig.enableBlending   = true;
+    transparentConfig.enableDepthWrite = false;
+
+    d_pipelines["Transparent"] = std::make_unique<rhi::vulkan::VulkanPipeline>(
+        *d_context,
+        d_swapchain->format(),
+        d_swapchain->depthFormat(),
+        *d_descriptorSetLayout,
+        transparentConfig);
+}
+
+rhi::vulkan::VulkanPipeline*
+Renderer::getPipeline(const std::string& name) const
+{
+    const auto it = d_pipelines.find(name);
+    if (it != d_pipelines.end()) {
+        return it->second.get();
+    }
+
+    std::cerr << "[Renderer] Error : Pipeline '" << name << "' not found !"
+              << std::endl;
+    return nullptr;
 }
 
 }  // close engine::renderer namespace
