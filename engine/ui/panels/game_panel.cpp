@@ -27,11 +27,16 @@ void GamePanel::render()
     const ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     d_viewportSize                 = viewportPanelSize;
 
-    if (d_imguiTextureID) {
-        ImGui::Image(d_imguiTextureID,
-                     ImVec2{d_viewportSize.x, d_viewportSize.y});
-    }
-    else {
+    // If the window was resized, the Renderer recreates the render target's
+    // view and sampler. We must invalidate `d_imguiTextureID` and register the
+    // new Vulkan handles with ImGui to avoid reading from destroyed memory.
+    if (!d_imguiTextureID || d_renderer_p->consumeResizeEvent()) {
+        // Clear the previous texture from ImGui's descriptor pool.
+        if (d_imguiTextureID != nullptr) {
+            ImGui_ImplVulkan_RemoveTexture(d_imguiTextureID);
+            d_imguiTextureID = nullptr;
+        }
+
         const vk::ImageView view    = d_renderer_p->renderTargetView();
         const vk::Sampler   sampler = d_renderer_p->renderTargetSampler();
 
@@ -41,6 +46,14 @@ void GamePanel::render()
                 view,
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+    }
+
+    // Render the viewport image.
+    if (d_imguiTextureID) {
+        ImGui::Image(d_imguiTextureID,
+                     ImVec2{d_viewportSize.x, d_viewportSize.y});
+    }
+    else {
         ImGui::Text("Target render not initialized");
     }
 

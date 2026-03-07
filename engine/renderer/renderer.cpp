@@ -316,6 +316,17 @@ void Renderer::endFrame(const vk::CommandBuffer cmd)
     if (presentResult == vk::Result::eErrorOutOfDateKHR ||
         presentResult == vk::Result::eSuboptimalKHR) {
         d_swapchain->recreateSwapChain();
+        d_renderTarget.image.clear();
+        d_renderTarget.view.clear();
+        d_renderTarget.memory.clear();
+        d_renderTarget.sampler.clear();
+        if (d_context->msaaSamples() != vk::SampleCountFlagBits::e1) {
+            d_renderTarget.msaaImage.clear();
+            d_renderTarget.msaaView.clear();
+            d_renderTarget.msaaMemory.clear();
+        }
+        createRenderTarget();
+        d_wasResized = true;
     }
     else {
         assert(presentResult == vk::Result::eSuccess);
@@ -382,7 +393,7 @@ void Renderer::createRenderTarget()
         bool     found           = false;
 
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((memRequirements.memoryTypeBits & (1 << i)) &&
+            if (memRequirements.memoryTypeBits & 1 << i &&
                 (memProperties.memoryTypes[i].propertyFlags &
                  vk::MemoryPropertyFlagBits::eDeviceLocal) ==
                     vk::MemoryPropertyFlagBits::eDeviceLocal) {

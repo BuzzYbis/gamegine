@@ -78,6 +78,11 @@ class Renderer {
                        std::unique_ptr<rhi::vulkan::VulkanPipeline> >
         d_pipelines;
 
+    /// Flag indicating whether the swapchain and render targets were recreated
+    /// this frame. Used by external systems (e.g., `engine::ui::GamePanel`) to
+    /// update their dependent resources.
+    bool d_wasResized = false;
+
   private:
     // PRIVATE MANIPULATORS
 
@@ -119,7 +124,10 @@ class Renderer {
 
     void beginSwapchainPass(vk::CommandBuffer cmd);
 
-    [[nodiscard]] rhi::vulkan::VulkanPipeline* getPipeline(const std::string& name) const;
+    /// Consumes the resize event flag.
+    /// Returns true and resets the internal flag if a resize occurred,
+    /// otherwise returns false.
+    bool consumeResizeEvent();
 
     // ACCESSORS
 
@@ -141,7 +149,11 @@ class Renderer {
     const vk::raii::DescriptorSetLayout& descriptorSetLayout() const;
 
     vk::ImageView renderTargetView() const;
-    vk::Sampler   renderTargetSampler() const;
+
+    vk::Sampler renderTargetSampler() const;
+
+    [[nodiscard]] rhi::vulkan::VulkanPipeline*
+    getPipeline(const std::string& name) const;
 };
 
 inline rhi::vulkan::VulkanContext& Renderer::context() const
@@ -173,6 +185,15 @@ inline vk::ImageView Renderer::renderTargetView() const
 inline vk::Sampler Renderer::renderTargetSampler() const
 {
     return d_renderTarget.sampler;
+}
+
+inline bool Renderer::consumeResizeEvent()
+{
+    if (d_wasResized) {
+        d_wasResized = false;
+        return true;
+    }
+    return false;
 }
 
 }  // close engine::renderer namespace
