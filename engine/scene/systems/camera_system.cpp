@@ -1,4 +1,4 @@
-// camera_system.cpp                                                -*-C++-*-
+// camera_system.cpp                                                  -*-C++-*-
 #include <scene/systems/camera_system.h>
 
 // core

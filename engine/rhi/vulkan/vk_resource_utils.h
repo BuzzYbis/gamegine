@@ -63,6 +63,17 @@ struct VulkanResourceUtils {
                                   const vk::raii::Image&  image,
                                   uint32_t                width,
                                   uint32_t                height);
+
+    // Transitions an image from one layout to another using memory barriers.
+    static void transition_image_layout(const vk::CommandBuffer& commandBuffer,
+                                        const vk::Image&         image,
+                                        vk::ImageLayout          old_layout,
+                                        vk::ImageLayout          new_layout,
+                                        vk::AccessFlags2 src_access_mask,
+                                        vk::AccessFlags2 dst_access_mask,
+                                        vk::PipelineStageFlags2 src_stage_mask,
+                                        vk::PipelineStageFlags2 dst_stage_mask,
+                                        vk::ImageAspectFlags    aspect_flags);
 };
 
 }  // close engine::rhi::vulkan namespace

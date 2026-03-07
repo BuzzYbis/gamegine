@@ -100,7 +100,11 @@ bool Renderer::initialize(const bool enableValidationLayers)
     d_commandBuffers = vk::raii::CommandBuffers(d_context->device(),
                                                 allocInfo);
     createSyncObjects();
-    createRenderTarget();
+    d_renderTarget = std::make_unique<rhi::vulkan::VulkanRenderTarget>(
+        *d_context,
+        d_swapchain->extent(),
+        d_swapchain->format(),
+        *d_commandPool->commandPool());
 
     return true;
 }
@@ -163,9 +167,9 @@ vk::CommandBuffer Renderer::beginFrame(scene::Scene& scene)
     scissor.offset = vk::Offset2D{0, 0};
     scissor.extent = d_swapchain->extent();
     cmd.setScissor(0, scissor);
-    transition_image_layout(
+    rhi::vulkan::VulkanResourceUtils::transition_image_layout(
         cmd,
-        d_renderTarget.image,
+        d_renderTarget->image(),
         vk::ImageLayout::eShaderReadOnlyOptimal,
         vk::ImageLayout::eColorAttachmentOptimal,
         {},                                                  // srcAccessMask
@@ -179,29 +183,30 @@ vk::CommandBuffer Renderer::beginFrame(scene::Scene& scene)
         d_swapchain->depthFormat() == vk::Format::eD16UnormS8Uint) {
         depthAspect |= vk::ImageAspectFlagBits::eStencil;
     }
-    transition_image_layout(cmd,
-                            *d_swapchain->depthImage(),
-                            vk::ImageLayout::eUndefined,
-                            vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                            vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                                vk::PipelineStageFlagBits2::eLateFragmentTests,
-                            vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                                vk::PipelineStageFlagBits2::eLateFragmentTests,
-                            depthAspect);
+    rhi::vulkan::VulkanResourceUtils::transition_image_layout(
+        cmd,
+        *d_swapchain->depthImage(),
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eDepthStencilAttachmentOptimal,
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+            vk::PipelineStageFlagBits2::eLateFragmentTests,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+            vk::PipelineStageFlagBits2::eLateFragmentTests,
+        depthAspect);
     const bool useMsaa = d_context->msaaSamples() !=
                          vk::SampleCountFlagBits::e1;
     vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
     vk::RenderingAttachmentInfo colorAttachment{};
-    colorAttachment.imageView   = *d_renderTarget.view;
+    colorAttachment.imageView   = d_renderTarget->view();
     colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colorAttachment.loadOp      = vk::AttachmentLoadOp::eClear;
     colorAttachment.storeOp     = vk::AttachmentStoreOp::eStore;
     colorAttachment.clearValue  = clearColor;
     if (useMsaa) {
         colorAttachment.resolveMode      = vk::ResolveModeFlagBits::eAverage;
-        colorAttachment.resolveImageView = *d_renderTarget.msaaView;
+        colorAttachment.resolveImageView = d_renderTarget->msaaView();
         colorAttachment.resolveImageLayout =
             vk::ImageLayout::eColorAttachmentOptimal;
     }
@@ -214,7 +219,7 @@ vk::CommandBuffer Renderer::beginFrame(scene::Scene& scene)
     depthAttachment.storeOp    = vk::AttachmentStoreOp::eDontCare;
     depthAttachment.clearValue = clearDepth;
     vk::RenderingInfo renderingInfo{};
-    renderingInfo.renderArea = vk::Rect2D{{0, 0}, d_renderTarget.extent};
+    renderingInfo.renderArea = vk::Rect2D{{0, 0}, d_renderTarget->extent()};
     renderingInfo.layerCount = 1;
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachments    = &colorAttachment;
@@ -279,15 +284,16 @@ void Renderer::renderScene(const vk::CommandBuffer cmd,
 void Renderer::endFrame(const vk::CommandBuffer cmd)
 {
     cmd.endRendering();
-    transition_image_layout(cmd,
-                            d_swapchain->images()[d_imageIndex],
-                            vk::ImageLayout::eColorAttachmentOptimal,
-                            vk::ImageLayout::ePresentSrcKHR,
-                            vk::AccessFlagBits2::eColorAttachmentWrite,
-                            {},
-                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                            vk::PipelineStageFlagBits2::eBottomOfPipe,
-                            vk::ImageAspectFlagBits::eColor);
+    rhi::vulkan::VulkanResourceUtils::transition_image_layout(
+        cmd,
+        d_swapchain->images()[d_imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eBottomOfPipe,
+        vk::ImageAspectFlagBits::eColor);
 
     cmd.end();
 
@@ -316,16 +322,13 @@ void Renderer::endFrame(const vk::CommandBuffer cmd)
     if (presentResult == vk::Result::eErrorOutOfDateKHR ||
         presentResult == vk::Result::eSuboptimalKHR) {
         d_swapchain->recreateSwapChain();
-        d_renderTarget.image.clear();
-        d_renderTarget.view.clear();
-        d_renderTarget.memory.clear();
-        d_renderTarget.sampler.clear();
-        if (d_context->msaaSamples() != vk::SampleCountFlagBits::e1) {
-            d_renderTarget.msaaImage.clear();
-            d_renderTarget.msaaView.clear();
-            d_renderTarget.msaaMemory.clear();
-        }
-        createRenderTarget();
+
+        d_renderTarget = std::make_unique<rhi::vulkan::VulkanRenderTarget>(
+            *d_context,
+            d_swapchain->extent(),
+            d_swapchain->format(),
+            *d_commandPool->commandPool());
+
         d_wasResized = true;
     }
     else {
@@ -338,26 +341,28 @@ void Renderer::endFrame(const vk::CommandBuffer cmd)
 void Renderer::beginSwapchainPass(const vk::CommandBuffer cmd)
 {
     cmd.endRendering();
-    transition_image_layout(cmd,
-                            *d_renderTarget.image,
-                            vk::ImageLayout::eColorAttachmentOptimal,
-                            vk::ImageLayout::eShaderReadOnlyOptimal,
-                            vk::AccessFlagBits2::eColorAttachmentWrite,
-                            vk::AccessFlagBits2::eShaderRead,
-                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                            vk::PipelineStageFlagBits2::eFragmentShader,
-                            vk::ImageAspectFlagBits::eColor);
+    rhi::vulkan::VulkanResourceUtils::transition_image_layout(
+        cmd,
+        d_renderTarget->image(),
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::eShaderReadOnlyOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::AccessFlagBits2::eShaderRead,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::ImageAspectFlagBits::eColor);
 
-    vk::Image swapchainImage = d_swapchain->images()[d_imageIndex];
-    transition_image_layout(cmd,
-                            swapchainImage,
-                            vk::ImageLayout::eUndefined,
-                            vk::ImageLayout::eColorAttachmentOptimal,
-                            {},
-                            vk::AccessFlagBits2::eColorAttachmentWrite,
-                            vk::PipelineStageFlagBits2::eTopOfPipe,
-                            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                            vk::ImageAspectFlagBits::eColor);
+    const vk::Image swapchainImage = d_swapchain->images()[d_imageIndex];
+    rhi::vulkan::VulkanResourceUtils::transition_image_layout(
+        cmd,
+        swapchainImage,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
 
     vk::RenderingAttachmentInfo colorAttachment{};
     colorAttachment.imageView   = *d_swapchain->imageViews()[d_imageIndex];
@@ -375,219 +380,38 @@ void Renderer::beginSwapchainPass(const vk::CommandBuffer cmd)
     cmd.beginRendering(renderingInfo);
 }
 
-void Renderer::createRenderTarget()
-{
-    d_renderTarget.extent = d_swapchain->extent();
-    d_renderTarget.format = d_swapchain->format();
-    vk::Extent3D extent3D = {d_renderTarget.extent.width,
-                             d_renderTarget.extent.height,
-                             1};
-
-    vk::SampleCountFlagBits msaaSamples = d_context->msaaSamples();
-
-    auto allocateImageMemory = [&](const vk::raii::Image& image) {
-        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-        vk::PhysicalDeviceMemoryProperties memProperties =
-            d_context->physicalDevice().getMemoryProperties();
-        uint32_t memoryTypeIndex = 0;
-        bool     found           = false;
-
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if (memRequirements.memoryTypeBits & 1 << i &&
-                (memProperties.memoryTypes[i].propertyFlags &
-                 vk::MemoryPropertyFlagBits::eDeviceLocal) ==
-                    vk::MemoryPropertyFlagBits::eDeviceLocal) {
-                memoryTypeIndex = i;
-                found           = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            throw std::runtime_error(
-                "Erreur : Impossible de trouver un type de mémoire adapté "
-                "pour le Render Target !");
-        }
-
-        vk::MemoryAllocateInfo allocInfo{};
-        allocInfo.allocationSize  = memRequirements.size;
-        allocInfo.memoryTypeIndex = memoryTypeIndex;
-        return vk::raii::DeviceMemory(d_context->device(), allocInfo);
-    };
-
-    if (msaaSamples != vk::SampleCountFlagBits::e1) {
-        vk::ImageCreateInfo msaaInfo{};
-        msaaInfo.imageType        = vk::ImageType::e2D;
-        msaaInfo.format           = d_renderTarget.format;
-        msaaInfo.extent           = extent3D;
-        msaaInfo.mipLevels        = 1;
-        msaaInfo.arrayLayers      = 1;
-        msaaInfo.samples          = msaaSamples;
-        msaaInfo.tiling           = vk::ImageTiling::eOptimal;
-        msaaInfo.usage            = vk::ImageUsageFlagBits::eColorAttachment;
-        d_renderTarget.msaaImage  = vk::raii::Image(d_context->device(),
-                                                   msaaInfo);
-        d_renderTarget.msaaMemory = allocateImageMemory(
-            d_renderTarget.msaaImage);
-        d_renderTarget.msaaImage.bindMemory(*d_renderTarget.msaaMemory, 0);
-
-        vk::ImageViewCreateInfo msaaViewInfo{};
-        msaaViewInfo.image    = *d_renderTarget.msaaImage;
-        msaaViewInfo.viewType = vk::ImageViewType::e2D;
-        msaaViewInfo.format   = d_renderTarget.format;
-        msaaViewInfo.subresourceRange.aspectMask =
-            vk::ImageAspectFlagBits::eColor;
-        msaaViewInfo.subresourceRange.baseMipLevel   = 0;
-        msaaViewInfo.subresourceRange.levelCount     = 1;
-        msaaViewInfo.subresourceRange.baseArrayLayer = 0;
-        msaaViewInfo.subresourceRange.layerCount     = 1;
-
-        d_renderTarget.msaaView = vk::raii::ImageView(d_context->device(),
-                                                      msaaViewInfo);
-    }
-
-    vk::ImageCreateInfo resolveInfo{};
-    resolveInfo.imageType   = vk::ImageType::e2D;
-    resolveInfo.format      = d_renderTarget.format;
-    resolveInfo.extent      = extent3D;
-    resolveInfo.mipLevels   = 1;
-    resolveInfo.arrayLayers = 1;
-    resolveInfo.samples     = vk::SampleCountFlagBits::e1;
-    resolveInfo.tiling      = vk::ImageTiling::eOptimal;
-    resolveInfo.usage       = vk::ImageUsageFlagBits::eColorAttachment |
-                        vk::ImageUsageFlagBits::eSampled;
-
-    d_renderTarget.image  = vk::raii::Image(d_context->device(), resolveInfo);
-    d_renderTarget.memory = allocateImageMemory(d_renderTarget.image);
-    d_renderTarget.image.bindMemory(*d_renderTarget.memory, 0);
-
-    vk::ImageViewCreateInfo resolveViewInfo{};
-    resolveViewInfo.image    = *d_renderTarget.image;
-    resolveViewInfo.viewType = vk::ImageViewType::e2D;
-    resolveViewInfo.format   = d_renderTarget.format;
-    resolveViewInfo.subresourceRange.aspectMask =
-        vk::ImageAspectFlagBits::eColor;
-    resolveViewInfo.subresourceRange.baseMipLevel   = 0;
-    resolveViewInfo.subresourceRange.levelCount     = 1;
-    resolveViewInfo.subresourceRange.baseArrayLayer = 0;
-    resolveViewInfo.subresourceRange.layerCount     = 1;
-
-    d_renderTarget.view = vk::raii::ImageView(d_context->device(),
-                                              resolveViewInfo);
-
-    vk::SamplerCreateInfo samplerInfo{};
-    samplerInfo.magFilter    = vk::Filter::eLinear;
-    samplerInfo.minFilter    = vk::Filter::eLinear;
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-
-    d_renderTarget.sampler = vk::raii::Sampler(d_context->device(),
-                                               samplerInfo);
-
-    vk::raii::CommandBuffer cmd =
-        rhi::vulkan::VulkanResourceUtils::beginSingleTimeCommands(
-            d_context->device(),
-            d_commandPool->commandPool());
-
-    transition_image_layout(cmd,
-                            *d_renderTarget.image,
-                            vk::ImageLayout::eUndefined,
-                            vk::ImageLayout::eShaderReadOnlyOptimal,
-                            vk::AccessFlagBits2::eNone,
-                            vk::AccessFlagBits2::eShaderRead,
-                            vk::PipelineStageFlagBits2::eTopOfPipe,
-                            vk::PipelineStageFlagBits2::eFragmentShader,
-                            vk::ImageAspectFlagBits::eColor);
-
-    if (msaaSamples != vk::SampleCountFlagBits::e1) {
-        transition_image_layout(
-            cmd,
-            *d_renderTarget.msaaImage,
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::AccessFlagBits2::eNone,
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eTopOfPipe,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::ImageAspectFlagBits::eColor);
-    }
-
-    rhi::vulkan::VulkanResourceUtils::endSingleTimeCommands(
-        d_context->graphicsQueue(),
-        cmd);
-}
-
 void Renderer::updateUniformBuffer(const uint32_t currentImage,
                                    scene::Scene&  scene) const
 {
-    auto       view   = glm::mat4(1.0f);
-    auto       proj   = glm::mat4(1.0f);
+    auto view = glm::mat4(1.0f);
+    auto proj = glm::mat4(1.0f);
+
     const auto extent = d_swapchain->extent();
     const auto width  = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
+
     if (width <= 0.0f || height <= 0.0f) {
         return;
     }
+
     const auto cameraView =
         scene.registry()
             .view<scene::TransformComponent, scene::CameraComponent>();
+
     for (const auto entity : cameraView) {
         auto [transform, camera] =
             cameraView.get<scene::TransformComponent, scene::CameraComponent>(
                 entity);
         camera.setAspectRatio(width / height);
-        const glm::vec3 eye   = transform.d_translation;
-        const float     yaw   = transform.d_rotation.y;
-        const float     pitch = transform.d_rotation.x;
-        glm::vec3       front;
-        front.x                     = std::cos(yaw) * std::cos(pitch);
-        front.y                     = std::sin(pitch);
-        front.z                     = std::sin(yaw) * std::cos(pitch);
-        const glm::vec3 cameraFront = glm::normalize(front);
-        const glm::vec3 center      = eye + cameraFront;
-        constexpr glm::vec3 up(0.0f, 1.0f, 0.0f);
-        view = glm::lookAt(eye, center, up);
+        view = camera.getViewMatrix(transform);
         proj = camera.getProjection();
+
         break;
     }
     UniformBufferObject ubo{};
     ubo.view = view;
     ubo.proj = proj;
     d_descriptorManager->updateUniformBuffer(currentImage, &ubo);
-}
-
-void Renderer::transition_image_layout(
-    const vk::CommandBuffer&      commandBuffer,
-    const vk::Image&              image,
-    const vk::ImageLayout         old_layout,
-    const vk::ImageLayout         new_layout,
-    const vk::AccessFlags2        src_access_mask,
-    const vk::AccessFlags2        dst_access_mask,
-    const vk::PipelineStageFlags2 src_stage_mask,
-    const vk::PipelineStageFlags2 dst_stage_mask,
-    const vk::ImageAspectFlags    aspect_flags)
-{
-    vk::ImageMemoryBarrier2 barrier         = {};
-    barrier.srcStageMask                    = src_stage_mask;
-    barrier.srcAccessMask                   = src_access_mask;
-    barrier.dstStageMask                    = dst_stage_mask;
-    barrier.dstAccessMask                   = dst_access_mask;
-    barrier.oldLayout                       = old_layout;
-    barrier.newLayout                       = new_layout;
-    barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image                           = image;
-    barrier.subresourceRange.aspectMask     = aspect_flags;
-    barrier.subresourceRange.baseMipLevel   = 0;
-    barrier.subresourceRange.levelCount     = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount     = 1;
-    vk::DependencyInfo dependency_info      = {};
-    dependency_info.dependencyFlags         = {};
-    dependency_info.imageMemoryBarrierCount = 1;
-    dependency_info.pImageMemoryBarriers    = &barrier;
-    commandBuffer.pipelineBarrier2(dependency_info);
 }
 
 void Renderer::createPipelines()

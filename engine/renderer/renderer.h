@@ -21,6 +21,7 @@
 #include <rhi/vulkan/vk_context.h>
 #include <rhi/vulkan/vk_descriptor_manager.h>
 #include <rhi/vulkan/vk_pipeline.h>
+#include <rhi/vulkan/vk_render_target.h>
 #include <rhi/vulkan/vk_swapchain.h>
 
 // scene
@@ -61,8 +62,6 @@ class Renderer {
     std::unique_ptr<rhi::vulkan::DescriptorManager> d_descriptorManager;
     std::unique_ptr<CommandPool>                    d_commandPool;
 
-    RenderTarget d_renderTarget;
-
     vk::raii::DescriptorSetLayout d_descriptorSetLayout = nullptr;
     vk::raii::CommandBuffers      d_commandBuffers;
 
@@ -78,6 +77,8 @@ class Renderer {
                        std::unique_ptr<rhi::vulkan::VulkanPipeline> >
         d_pipelines;
 
+    std::unique_ptr<rhi::vulkan::VulkanRenderTarget> d_renderTarget;
+
     /// Flag indicating whether the swapchain and render targets were recreated
     /// this frame. Used by external systems (e.g., `engine::ui::GamePanel`) to
     /// update their dependent resources.
@@ -85,17 +86,6 @@ class Renderer {
 
   private:
     // PRIVATE MANIPULATORS
-
-    // Transitions an image from one layout to another using memory barriers.
-    static void transition_image_layout(const vk::CommandBuffer& commandBuffer,
-                                        const vk::Image&         image,
-                                        vk::ImageLayout          old_layout,
-                                        vk::ImageLayout          new_layout,
-                                        vk::AccessFlags2 src_access_mask,
-                                        vk::AccessFlags2 dst_access_mask,
-                                        vk::PipelineStageFlags2 src_stage_mask,
-                                        vk::PipelineStageFlags2 dst_stage_mask,
-                                        vk::ImageAspectFlags    aspect_flags);
 
     void createPipelines();
 
@@ -119,8 +109,6 @@ class Renderer {
     void endFrame(vk::CommandBuffer cmd);
 
     void createSyncObjects();
-
-    void createRenderTarget();
 
     void beginSwapchainPass(vk::CommandBuffer cmd);
 
@@ -179,12 +167,12 @@ Renderer::descriptorSetLayout() const
 
 inline vk::ImageView Renderer::renderTargetView() const
 {
-    return d_renderTarget.view;
+    return d_renderTarget->view();
 }
 
 inline vk::Sampler Renderer::renderTargetSampler() const
 {
-    return d_renderTarget.sampler;
+    return d_renderTarget->sampler();
 }
 
 inline bool Renderer::consumeResizeEvent()

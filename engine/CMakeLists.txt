@@ -37,6 +37,8 @@ set(IMGUI_SOURCES
         ui/panels/game_panel.h
         asset/model_data.h
         asset/importers/model_importer.h
+        rhi/vulkan/vk_render_target.cpp
+        rhi/vulkan/vk_render_target.h
 )
 
 add_library(engine STATIC
