@@ -55,6 +55,7 @@ _deps
 
 /cmake-build-debug/
 /build/
+.cache
 
 # IDE 
 .zed 
