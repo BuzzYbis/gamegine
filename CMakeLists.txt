@@ -14,8 +14,8 @@ set(GAMEGINE_ROOT ${CMAKE_CURRENT_LIST_DIR})
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/deps/vulkan_headers.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/deps/entt.cmake)
 
-add_subdirectory(engine)
+add_subdirectory(eng)
 add_subdirectory(game)
 
 add_custom_target(example)
-add_dependencies(example engine example_gamegine)
+add_dependencies(example eng example_gamegine)

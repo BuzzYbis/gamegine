@@ -14,10 +14,9 @@ find_program(SLANGC_EXECUTABLE slangc
 )
 
 add_executable(example_gamegine main.cpp)
-target_link_libraries(example_gamegine PRIVATE engine glfw)
+target_link_libraries(example_gamegine PRIVATE eng glfw)
 
 # Add shader compilation target
-# You can specify multiple shader sources like this:
 add_slang_shader_target(shader_compile
         SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.slang
@@ -51,7 +50,7 @@ endforeach ()
 add_custom_command(TARGET example_gamegine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/models"
-                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/models"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models"
         COMMENT "Copying models..."
 )
