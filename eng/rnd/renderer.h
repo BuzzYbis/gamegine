@@ -27,7 +27,6 @@
 #include <rhi/rhi_commandlistprotocol.h>
 #include <rhi/rhi_contextprotocol.h>
 #include <rhi/rhi_pipelineprotocol.h>
-#include <rhi/rhi_rendertargetprotocol.h>
 #include <rhi/rhi_resourcelayoutprotocol.h>
 #include <rhi/rhi_resourcesetprotocol.h>
 #include <rhi/rhi_swapchainprotocol.h>
@@ -51,9 +50,6 @@ class Renderer {
 
     std::unique_ptr<rhi::SwapchainProtocol>                 d_swapchain;
     std::vector<std::unique_ptr<rhi::CommandListProtocol> > d_commandLists;
-
-    // Viewport Render Target
-    std::unique_ptr<rhi::RenderTargetProtocol> d_viewRenderTarget;
 
     // Global Resources (Camera)
     std::unique_ptr<rhi::ResourceLayoutProtocol> d_globalLayout;
@@ -126,10 +122,6 @@ class Renderer {
     [[nodiscard]]
     rhi::SwapchainProtocol* swapchain() const;
 
-    /// Return a pointer to the main viewport render target.
-    [[nodiscard]]
-    rhi::RenderTargetProtocol* viewRenderTarget() const;
-
     /// Return a pointer to the pipeline state object with the specified
     /// 'name'. Return null if no such pipeline exists.
     [[nodiscard]]
@@ -149,11 +141,6 @@ inline rhi::ContextProtocol& Renderer::context() const
 inline rhi::SwapchainProtocol* Renderer::swapchain() const
 {
     return d_swapchain.get();
-}
-
-inline rhi::RenderTargetProtocol* Renderer::viewRenderTarget() const
-{
-    return d_viewRenderTarget.get();
 }
 
 inline rhi::ResourceLayoutProtocol* Renderer::materialLayout() const

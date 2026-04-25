@@ -24,7 +24,6 @@ class ResourceSetProtocol;
 class PipelineProtocol;
 class BufferProtocol;
 class SwapchainProtocol;
-class RenderTargetProtocol;
 
 // =========================
 // class CommandListProtocol
@@ -75,14 +74,6 @@ class CommandListProtocol {
     /// End the current rendering pass targeting the swapchain.
     virtual void endSwapchainRendering(SwapchainProtocol* swapchain,
                                        uint32_t           imageIndex) = 0;
-
-    /// Begin a rendering pass targeting the specified 'target'. Use the
-    /// specified 'clearColor' to initialize the color attachment.
-    virtual void beginRenderTargetRendering(RenderTargetProtocol* target,
-                                            const ClearColor& clearColor) = 0;
-
-    /// End the current rendering pass targeting a render target.
-    virtual void endRenderTargetRendering(RenderTargetProtocol* target) = 0;
 
     /// Bind the specified 'pipeline' state object for subsequent draw
     /// calls.

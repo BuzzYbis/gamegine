@@ -162,13 +162,6 @@ class Context : public ContextProtocol {
                   Format      format,
                   const void* pixels) override;
 
-    /// Create and return a newly allocated render target with the specified
-    /// 'width', 'height', and 'format'.
-    std::unique_ptr<RenderTargetProtocol>
-    createRenderTarget(uint32_t width,
-                       uint32_t height,
-                       Format   format) override;
-
     /// Create and return a newly allocated resource layout configured
     /// according to the specified 'config'.
     std::unique_ptr<ResourceLayoutProtocol>

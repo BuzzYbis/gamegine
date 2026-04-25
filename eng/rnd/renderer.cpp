@@ -29,11 +29,6 @@ bool Renderer::initialize()
     d_swapchain = d_context_p->createSwapchain(d_window_p->width(),
                                                d_window_p->height());
 
-    d_viewRenderTarget = d_context_p->createRenderTarget(
-        d_window_p->width(),
-        d_window_p->height(),
-        rhi::Format::R8G8B8A8_SRGB);
-
     d_cameraUbo = d_context_p->createBuffer(sizeof(UniformBufferObject),
                                             rhi::BufferUsage::Uniform);
 
@@ -87,7 +82,7 @@ rhi::CommandListProtocol* Renderer::beginFrame(scn::Scene& scene)
 
 void Renderer::beginSwapchainPass(rhi::CommandListProtocol* cmd)
 {
-    constexpr rhi::ClearColor clearColor{0.0f, 0.0f, 0.0f, 1.0f};
+    constexpr rhi::ClearColor clearColor{0.1f, 0.1f, 0.1f, 1.0f};
     cmd->beginSwapchainRendering(d_swapchain.get(), d_imageIndex, clearColor);
 }
 
@@ -108,19 +103,14 @@ void Renderer::endFrame(rhi::CommandListProtocol* cmd)
 void Renderer::renderScene(rhi::CommandListProtocol* cmd,
                            scn::Scene&               scene) const
 {
-    if (d_viewRenderTarget) {
-        constexpr rhi::ClearColor clearColor{0.1f, 0.1f, 0.1f, 1.0f};
-        cmd->beginRenderTargetRendering(d_viewRenderTarget.get(), clearColor);
-    }
-
-    const auto group = scene.registry()
-                           .view<scn::comp::TransformComponent,
-                                 scn::comp::MeshComponent>();
+    const auto group =
+        scene.registry()
+            .view<scn::comp::TransformComponent, scn::comp::MeshComponent>();
 
     for (const auto entity : group) {
-        auto [transform,
-              meshComp] = group.get<scn::comp::TransformComponent,
-                                    scn::comp::MeshComponent>(entity);
+        auto [transform, meshComp] =
+            group.get<scn::comp::TransformComponent, scn::comp::MeshComponent>(
+                entity);
 
         if (meshComp.d_meshes.empty() ||
             meshComp.d_materials.size() != meshComp.d_meshes.size()) {
@@ -160,10 +150,6 @@ void Renderer::renderScene(rhi::CommandListProtocol* cmd,
             meshPtr->draw(cmd);
         }
     }
-
-    if (d_viewRenderTarget) {
-        cmd->endRenderTargetRendering(d_viewRenderTarget.get());
-    }
 }
 
 void Renderer::updateUniformBuffer(scn::Scene& scene) const
@@ -178,17 +164,16 @@ void Renderer::updateUniformBuffer(scn::Scene& scene) const
         return;
     }
 
-    const auto cameraView = scene.registry()
-                                .view<scn::comp::TransformComponent,
-                                      scn::comp::CameraComponent>();
+    const auto cameraView =
+        scene.registry()
+            .view<scn::comp::TransformComponent, scn::comp::CameraComponent>();
 
     for (const auto entity : cameraView) {
         auto [transform,
               camera] = cameraView.get<scn::comp::TransformComponent,
-                                       scn::comp::CameraComponent>(
-            entity);
+                                       scn::comp::CameraComponent>(entity);
         camera.setAspectRatio(width / height);
-        view = camera.getViewMatrix(transform);
+        view = scn::comp::CameraComponent::getViewMatrix(transform);
         proj = camera.getProjection();
         break;
     }
@@ -203,7 +188,7 @@ void Renderer::createPipelines()
     rhi::PipelineConfig config{};
     config.vertexShaderName      = "shader";
     config.fragmentShaderName    = "shader";
-    config.colorAttachmentFormat = rhi::Format::R8G8B8A8_SRGB;
+    config.colorAttachmentFormat = d_swapchain->format();
     config.depthAttachmentFormat = rhi::Format::D32_SFloat;
 
     config.resourceLayouts   = {d_globalLayout.get(), d_materialLayout.get()};

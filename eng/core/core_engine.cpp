@@ -12,10 +12,6 @@
 #include <scn/scn_entity.h>
 #include <scn/scn_scene.h>
 
-// ui
-#include <ui/pnl/pnl_entities.h>
-#include <ui/pnl/pnl_game.h>
-
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
 #else
@@ -61,13 +57,6 @@ void Engine::initialize(const char* title, const int width, const int height)
                             d_renderer->swapchain(),
                             *d_window,
                             api);
-
-    d_uiManager->addPanel(
-        std::make_unique<ui::pnl::EntitiesPanel>(d_scene.get()));
-    d_uiManager->addPanel(
-        std::make_unique<ui::pnl::GamePanel>(d_uiManager.get(),
-                                             d_renderer.get(),
-                                             d_inputManager.get()));
 }
 
 void Engine::run()
@@ -92,11 +81,11 @@ void Engine::run()
         rhi::CommandListProtocol* cmd = d_renderer->beginFrame(*d_scene);
 
         if (cmd) {
-            // 1. Render scene offscreen (into d_viewRenderTarget)
-            d_renderer->renderScene(cmd, *d_scene);
-
-            // 2. Start swapchain rendering pass
+            // 1. Start swapchain rendering pass
             d_renderer->beginSwapchainPass(cmd);
+
+            // 2. Render scene directly into the swapchain
+            d_renderer->renderScene(cmd, *d_scene);
 
             // 3. Render UI into the swapchain pass
             d_uiManager->endFrame(cmd);

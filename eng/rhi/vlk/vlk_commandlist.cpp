@@ -5,7 +5,6 @@
 #include <rhi/rhi_types.h>
 #include <rhi/vlk/vlk_buffer.h>
 #include <rhi/vlk/vlk_pipeline.h>
-#include <rhi/vlk/vlk_rendertarget.h>
 #include <rhi/vlk/vlk_resourceset.h>
 #include <rhi/vlk/vlk_swapchain.h>
 #include <rhi/vlk/vlk_texture.h>
@@ -14,7 +13,7 @@ namespace eng::rhi::vlk {
 
 namespace {
 
-vk::ShaderStageFlags getVkShaderStageFlags(ShaderStage stage)
+vk::ShaderStageFlags getVkShaderStageFlags(const ShaderStage stage)
 {
     switch (stage) {
     case ShaderStage::Vertex: return vk::ShaderStageFlagBits::eVertex;
@@ -201,8 +200,8 @@ void CommandList::endSwapchainRendering(SwapchainProtocol* swapchain,
     d_commandBuffer.endRendering();
 
     // 2. ENSUITE LA BARRIÈRE ! (On envoie l'image à l'écran)
-    auto*     vlkSwapchain = static_cast<Swapchain*>(swapchain);
-    vk::Image image        = vlkSwapchain->image(imageIndex);
+    const auto*     vlkSwapchain = static_cast<Swapchain*>(swapchain);
+    const vk::Image image        = vlkSwapchain->image(imageIndex);
 
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout        = vk::ImageLayout::eColorAttachmentOptimal;
@@ -214,110 +213,6 @@ void CommandList::endSwapchainRendering(SwapchainProtocol* swapchain,
     d_commandBuffer.pipelineBarrier(
         vk::PipelineStageFlagBits::eColorAttachmentOutput,
         vk::PipelineStageFlagBits::eBottomOfPipe,
-        {},
-        nullptr,
-        nullptr,
-        barrier);
-}
-
-void CommandList::beginRenderTargetRendering(RenderTargetProtocol* target,
-                                             const ClearColor&     clearColor)
-{
-    auto*               vlkTarget = static_cast<RenderTarget*>(target);
-    const auto*         vlkTex    = vlkTarget->vlkTexture();
-    const vk::Image     image     = *vlkTex->vlkImage();
-    const vk::ImageView view      = *vlkTex->view();
-
-    // 1. Barrier to ColorAttachmentOptimal
-    vk::ImageMemoryBarrier barrier{};
-    barrier.oldLayout        = vk::ImageLayout::eUndefined;
-    barrier.newLayout        = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.image            = image;
-    barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-    barrier.srcAccessMask    = {};
-    barrier.dstAccessMask    = vk::AccessFlagBits::eColorAttachmentWrite;
-
-    d_commandBuffer.pipelineBarrier(
-        vk::PipelineStageFlagBits::eTopOfPipe,
-        vk::PipelineStageFlagBits::eColorAttachmentOutput,
-        {},
-        nullptr,
-        nullptr,
-        barrier);
-
-    // 2. Barrier for Depth
-    vk::ImageMemoryBarrier depthBarrier{};
-    depthBarrier.oldLayout        = vk::ImageLayout::eUndefined;
-    depthBarrier.newLayout        = vk::ImageLayout::eDepthAttachmentOptimal;
-    depthBarrier.image            = *vlkTarget->depthImage();  // Need accessor
-    depthBarrier.subresourceRange = {vk::ImageAspectFlagBits::eDepth,
-                                     0,
-                                     1,
-                                     0,
-                                     1};
-    depthBarrier.dstAccessMask =
-        vk::AccessFlagBits::eDepthStencilAttachmentWrite;
-
-    d_commandBuffer.pipelineBarrier(
-        vk::PipelineStageFlagBits::eEarlyFragmentTests |
-            vk::PipelineStageFlagBits::eLateFragmentTests,
-        vk::PipelineStageFlagBits::eEarlyFragmentTests |
-            vk::PipelineStageFlagBits::eLateFragmentTests,
-        {},
-        nullptr,
-        nullptr,
-        depthBarrier);
-
-    // 3. Attachments
-    vk::RenderingAttachmentInfo colorAttachment{};
-    colorAttachment.imageView   = view;
-    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    colorAttachment.loadOp      = vk::AttachmentLoadOp::eClear;
-    colorAttachment.storeOp     = vk::AttachmentStoreOp::eStore;
-    colorAttachment.clearValue  = vk::ClearColorValue(clearColor.r,
-                                                     clearColor.g,
-                                                     clearColor.b,
-                                                     clearColor.a);
-
-    vk::RenderingAttachmentInfo depthAttachment{};
-    depthAttachment.imageView   = *vlkTarget->depthView();
-    depthAttachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-    depthAttachment.loadOp      = vk::AttachmentLoadOp::eClear;
-    depthAttachment.storeOp     = vk::AttachmentStoreOp::eDontCare;
-    depthAttachment.clearValue  = vk::ClearDepthStencilValue(1.0f, 0);
-
-    vk::RenderingInfo renderingInfo{};
-    renderingInfo.renderArea           = vk::Rect2D{{0, 0},
-                                          vk::Extent2D{vlkTarget->width(),
-                                                       vlkTarget->height()}};
-    renderingInfo.layerCount           = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments    = &colorAttachment;
-    renderingInfo.pDepthAttachment     = &depthAttachment;
-
-    d_commandBuffer.beginRendering(renderingInfo);
-}
-
-void CommandList::endRenderTargetRendering(RenderTargetProtocol* target)
-{
-    d_commandBuffer.endRendering();
-
-    auto*           vlkTarget = static_cast<RenderTarget*>(target);
-    const auto*     vlkTex    = vlkTarget->vlkTexture();
-    const vk::Image image     = *vlkTex->vlkImage();
-
-    // Barrier to ShaderReadOnlyOptimal
-    vk::ImageMemoryBarrier barrier{};
-    barrier.oldLayout        = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.newLayout        = vk::ImageLayout::eShaderReadOnlyOptimal;
-    barrier.image            = image;
-    barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-    barrier.srcAccessMask    = vk::AccessFlagBits::eColorAttachmentWrite;
-    barrier.dstAccessMask    = vk::AccessFlagBits::eShaderRead;
-
-    d_commandBuffer.pipelineBarrier(
-        vk::PipelineStageFlagBits::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits::eFragmentShader,
         {},
         nullptr,
         nullptr,

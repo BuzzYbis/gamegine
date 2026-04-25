@@ -1,5 +1,7 @@
 // core_window.cpp                                                    -*-C++-*-
 #include <core/core_window.h>
+
+// std
 #include <iostream>
 
 namespace eng::core {
@@ -8,7 +10,7 @@ void Window::initialize(const char* title,
                         const int   requestedHeight)
 {
     // Initialize GLFW library
-    if (!glfwInit()) {
+    if (glfwInit() == GLFW_FALSE) {
         throw std::runtime_error("Failed to initialize GLFW");
     }
 
@@ -38,12 +40,14 @@ void Window::initialize(const char* title,
     // Set the user pointer to the platform instance
     glfwSetWindowUserPointer(d_window_p, this);
 
-    glfwSetFramebufferSizeCallback(d_window_p, framebufferResizeCallback);
+    (void)glfwSetFramebufferSizeCallback(d_window_p,
+                                         framebufferResizeCallback);
 }
 
 void Window::resize() const
 {
-    int width = 0, height = 0;
+    int width  = 0;
+    int height = 0;
     glfwGetFramebufferSize(d_window_p, &width, &height);
     while (width == 0 || height == 0) {
         glfwGetFramebufferSize(d_window_p, &width, &height);
@@ -53,7 +57,7 @@ void Window::resize() const
 
 bool Window::shouldClose() const
 {
-    return glfwWindowShouldClose(d_window_p);
+    return glfwWindowShouldClose(d_window_p) == GLFW_TRUE;
 }
 
 void Window::pollEvents()
@@ -90,8 +94,9 @@ void Window::setMouseCapture(const bool capture) const
     if (capture) {
         glfwSetInputMode(d_window_p, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         // Reset position to prevent camera jumps on activation.
-        if (glfwRawMouseMotionSupported())
+        if (glfwRawMouseMotionSupported() == GLFW_TRUE) {
             glfwSetInputMode(d_window_p, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        }
     }
     else {
         glfwSetInputMode(d_window_p, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -100,7 +105,8 @@ void Window::setMouseCapture(const bool capture) const
 
 glm::vec2 Window::mousePosition() const
 {
-    double x, y;
+    double x = 0.0F;
+    double y = 0.0F;
     glfwGetCursorPos(d_window_p, &x, &y);
     return {static_cast<float>(x), static_cast<float>(y)};
 }

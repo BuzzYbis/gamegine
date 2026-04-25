@@ -33,16 +33,18 @@ int main()
         auto& camera = cameraEntity.addComponent<comp::CameraComponent>();
         camera.aspectRatio = static_cast<float>(WINDOW_WIDTH) /
                              static_cast<float>(WINDOW_HEIGHT);
-        camera.farPlane = 1000.0f;
+        camera.farPlane = 1000.0F;
+        camera.fov      = 90;
+
         auto& cameraTransform =
             cameraEntity.getComponent<comp::TransformComponent>();
-        cameraTransform.setPosition({-2.5f, 0.25f, 0.0f});
-        cameraTransform.setRotation({0.0f, 0.0f, 0.0f});
+        cameraTransform.setPosition({-10.0F, 1.5F, 0.0F});
+        cameraTransform.setRotation({0.0F, 0.0F, 0.0F});
 
         const auto [meshes, materials] = engine->assetManager()->loadMesh(
-            "models/viking_room.obj");
+            "models/sponza/sponza.obj");
 
-        auto entity      = engine->createEntity("Viking_room");
+        auto entity      = engine->createEntity("Sponza (OBJre)");
         auto& [meshCompMesh,
                material] = entity.addComponent<comp::MeshComponent>();
         meshCompMesh     = meshes;
@@ -50,9 +52,7 @@ int main()
 
         auto& entityTransform =
             entity.getComponent<comp::TransformComponent>();
-        entityTransform.setPosition({0.0f, -0.2f, 0.0f});
-        entityTransform.setRotation(
-            {glm::radians(-90.0f), 0.0f, glm::radians(180.0f)});
+        entityTransform.setScale({0.01F, 0.01F, 0.01F});
 
         engine->run();
     }

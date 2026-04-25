@@ -5,9 +5,6 @@
 #include <iostream>
 #include <set>
 
-// third-party
-#include <tiny_gltf.h>
-
 // rhi
 #include <rhi/rhi_types.h>
 #include <rhi/vlk/vlk_buffer.h>
@@ -17,7 +14,6 @@
 #include <rhi/vlk/vlk_resourceset.h>
 #include <rhi/vlk/vlk_swapchain.h>
 #include <rhi/vlk/vlk_texture.h>
-#include <rhi/vlk/vlk_rendertarget.h>
 #include <rhi/vlk/vlk_utils.h>
 
 namespace eng::rhi::vlk {
@@ -527,14 +523,6 @@ Context::createTexture(const uint32_t width,
                                      mipLevels,
                                      Utils::getVkFormat(format),
                                      pixels);
-}
-
-std::unique_ptr<RenderTargetProtocol>
-Context::createRenderTarget(const uint32_t width,
-                            const uint32_t height,
-                            const Format   format)
-{
-    return std::make_unique<RenderTarget>(this, width, height, format);
 }
 
 std::unique_ptr<ResourceLayoutProtocol>

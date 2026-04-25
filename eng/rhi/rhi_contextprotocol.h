@@ -26,7 +26,6 @@ class ResourceLayoutProtocol;
 class ResourceSetProtocol;
 class SwapchainProtocol;
 class TextureProtocol;
-class RenderTargetProtocol;
 
 struct PipelineConfig;
 struct ResourceLayoutConfig;
@@ -84,11 +83,6 @@ class ContextProtocol {
                   uint32_t    mipLevels,
                   Format      format,
                   const void* pixels) = 0;
-
-    /// Create and return a newly allocated render target with the specified
-    /// 'width', 'height', and 'format'.
-    virtual std::unique_ptr<RenderTargetProtocol>
-    createRenderTarget(uint32_t width, uint32_t height, Format format) = 0;
 
     /// Create and return a newly allocated resource layout configured
     /// according to the specified 'config'.

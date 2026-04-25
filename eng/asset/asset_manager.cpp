@@ -98,7 +98,7 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
             tex = loadMaterial(diffuseTexturePath);
         }
         else {
-            tex = loadMaterial("textures/viking_room.png");
+            tex = loadMaterial("textures/no_texture.png");
         }
 
         mat->setTexture(tex);

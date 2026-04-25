@@ -25,25 +25,15 @@ add_slang_shader_target(shader_compile
 # Make the example depend on shader compilation
 add_dependencies(example_gamegine shader_compile)
 
-# Copy textures directory to output directory so the executable can find them
-file(GLOB_RECURSE TEXTURE_FILES
-        "assets/textures/*"
+# Copy textures directory to output directory so the executable can find them.
+# Using copy_directory ensures new .png files are picked up without re-running cmake.
+add_custom_command(TARGET example_gamegine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/textures"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures"
+        COMMENT "Copying textures..."
 )
-
-foreach (TEXTURE_FILE ${TEXTURE_FILES})
-    # Get relative path from textures directory
-    file(RELATIVE_PATH RELATIVE_PATH
-            "${CMAKE_CURRENT_SOURCE_DIR}/assets/textures"
-            "${TEXTURE_FILE}")
-    # Set destination path in binary directory
-    set(DEST_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/${RELATIVE_PATH}")
-    # Add custom command to copy the file
-    add_custom_command(TARGET example_gamegine POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TEXTURE_FILE}" "${DEST_PATH}"
-            COMMENT "Copying texture: ${RELATIVE_PATH}"
-    )
-endforeach ()
 
 # Copy entire models directory so the executable can find them.
 # Using copy_directory ensures new .obj files are picked up without re-running cmake.

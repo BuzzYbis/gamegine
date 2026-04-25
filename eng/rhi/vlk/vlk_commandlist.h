@@ -97,13 +97,6 @@ class CommandList : public CommandListProtocol {
     void endSwapchainRendering(SwapchainProtocol* swapchain,
                                uint32_t           imageIndex) override;
 
-    /// Begin a rendering pass targeting the specified 'target'.
-    void beginRenderTargetRendering(RenderTargetProtocol* target,
-                                    const ClearColor&     clearColor) override;
-
-    /// End the current rendering pass targeting a render target.
-    void endRenderTargetRendering(RenderTargetProtocol* target) override;
-
     /// Bind the specified 'resourceSet' to the specified 'setIndex' for
     /// the specified 'pipeline'.
     void bindResourceSet(PipelineProtocol*    pipeline,
