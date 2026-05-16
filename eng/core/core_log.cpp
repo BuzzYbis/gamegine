@@ -11,11 +11,11 @@ namespace eng::core {
 std::mutex Logger::s_logMutex;
 
 constexpr auto COLOR_RESET = "\033[0m";
-constexpr auto COLOR_TRACE = "\033[90m";    // Gris
-constexpr auto COLOR_INFO  = "\033[32m";    // Vert
-constexpr auto COLOR_WARN  = "\033[33m";    // Jaune
-constexpr auto COLOR_ERROR = "\033[31m";    // Rouge
-constexpr auto COLOR_FATAL = "\033[1;31m";  // Rouge Gras
+constexpr auto COLOR_TRACE = "\033[90m";    // Gray
+constexpr auto COLOR_INFO  = "\033[32m";    // Green
+constexpr auto COLOR_WARN  = "\033[33m";    // Yellow
+constexpr auto COLOR_ERROR = "\033[31m";    // Red
+constexpr auto COLOR_FATAL = "\033[1;31m";  // Bold red
 
 constexpr const char* getFileName(const char* path)
 {
