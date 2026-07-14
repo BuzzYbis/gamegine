@@ -5,12 +5,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Dependencies ---
-# Vulkan is included in main CMakeLists.txt, but include it here too for safety
 include(${CMAKE_SOURCE_DIR}/cmake/deps/vulkan_headers.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/glfw.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/glm.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/stb.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/tinyobjloader.cmake)
+include(${GAMEGINE_ROOT}/cmake/deps/tinygltfloader.cmake)
 
 # --- Target Definition ---
 add_library(eng STATIC)
@@ -54,6 +54,7 @@ target_sources(eng PRIVATE
         rnd/texture.h
         rnd/material.cpp
         rnd/material.h
+
         rhi/rhi_factory.cpp
         rhi/rhi_factory.h
         rhi/rhi_contextprotocol.h
@@ -64,6 +65,7 @@ target_sources(eng PRIVATE
         rhi/rhi_resourcelayoutprotocol.h
         rhi/rhi_resourcesetprotocol.h
         rhi/rhi_types.h
+
         rhi/vlk/vlk_context.cpp
         rhi/vlk/vlk_context.h
         rhi/vlk/vlk_swapchain.cpp
@@ -109,6 +111,7 @@ target_sources(eng PRIVATE
         ui/ui_factory.h
         ui/ui_backendprotocol.h
 )
+
 # 5. Assets & Importers
 set(TINY_GLTF_DIR ${CMAKE_SOURCE_DIR}/third_party/tiny_gltf)
 target_sources(eng PRIVATE
@@ -129,7 +132,9 @@ target_include_directories(eng
         ${FASTNOISE_INCLUDE_DIR}
         PRIVATE
         ${IMGUI_DIR}/backends
-)# --- Linking ---
+)
+
+# --- Linking ---
 if (TARGET Vulkan::Vulkan)
     target_link_libraries(eng PUBLIC Vulkan::Vulkan)
 elseif (TARGET Vulkan::Headers)
@@ -156,7 +161,8 @@ target_link_libraries(eng PUBLIC
         stb::stb
         tinyobjloader::tinyobjloader
 )
-# --- Warnings (Best Practice) ---
+
+# --- Warnings ---
 if (MSVC)
     target_compile_options(eng PRIVATE /W4)
 else ()
