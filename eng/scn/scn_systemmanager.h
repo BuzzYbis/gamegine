@@ -1,4 +1,4 @@
-// scn_systemmanager.h                                               -*-C++-*-
+// scn_systemmanager.h                                                -*-C++-*-
 #ifndef INCLUDED_SCN_SYSTEM_MANAGER_H
 #define INCLUDED_SCN_SYSTEM_MANAGER_H
 

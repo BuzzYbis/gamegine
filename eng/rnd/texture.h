@@ -1,4 +1,4 @@
-// texture.h                                                         -*-C++-*-
+// texture.h                                                          -*-C++-*-
 #ifndef INCLUDED_ENG_RND_TEXTURE_H
 #define INCLUDED_ENG_RND_TEXTURE_H
 

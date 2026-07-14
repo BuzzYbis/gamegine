@@ -1,4 +1,4 @@
-// texture.cpp                                                       -*-C++-*-
+// texture.cpp                                                        -*-C++-*-
 #include <rnd/texture.h>
 
 // std

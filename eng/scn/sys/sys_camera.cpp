@@ -45,7 +45,7 @@ void CameraSystem::update(entt::registry&     registry,
                 transform.d_rotation.x = -1.5f;
         }
 
-        const float velocity = 6.0f * dt;
+        const float velocity = 10.0f * dt;
 
         if (inputManager.isActive(core::InputAction::MOVE_FORWARD)) {
             transform.d_translation += front * velocity;

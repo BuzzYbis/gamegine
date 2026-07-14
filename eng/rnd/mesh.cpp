@@ -31,4 +31,4 @@ void Mesh::draw(rhi::CommandListProtocol* cmd) const
     cmd->drawIndexed(m_indexCount, 1, 0, 0, 0);
 }
 
-}  // namespace eng::renderer
+}  // close package namespace
