@@ -40,6 +40,15 @@
 *.out
 *.app
 
+# Compiled Shaders
+*.spv
+
+# Models
+game/assets/models/
+
+# OS
+.DS_Store
+
 ### CMake template
 CMakeLists.txt.user
 CMakeCache.txt
