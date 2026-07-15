@@ -15,7 +15,7 @@
 
 // third-party
 #define TINYOBJLOADER_IMPLEMENTATION
-#include <../../../third_party/tiny_obj/tiny_obj_loader.h>
+#include <tiny_obj_loader.h>
 
 namespace eng::asset::impt {
 
