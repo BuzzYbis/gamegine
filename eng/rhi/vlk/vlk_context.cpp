@@ -6,6 +6,8 @@
 #include <set>
 
 // rhi
+#include "core/core_log.h"
+
 #include <rhi/rhi_types.h>
 #include <rhi/vlk/vlk_buffer.h>
 #include <rhi/vlk/vlk_commandlist.h>
@@ -170,8 +172,7 @@ bool Context::initialize(const bool enableValidation)
         return false;
     }
 
-    // Note: Force 1 sample temporarily to match dynamic rendering attachments.
-    d_msaaSamples = vk::SampleCountFlagBits::e1;
+    d_msaaSamples = findMaxUsableSampleCount();
 
     // Logical Device & Queues
     if (!createLogicalDevice()) {

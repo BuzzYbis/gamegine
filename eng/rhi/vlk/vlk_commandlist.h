@@ -2,7 +2,8 @@
 #ifndef INCLUDED_ENG_RHI_VLK_COMMANDLIST_H
 #define INCLUDED_ENG_RHI_VLK_COMMANDLIST_H
 
-//@PURPOSE: Provide a Vulkan-specific implementation for recording GPU commands.
+//@PURPOSE: Provide a Vulkan-specific implementation for recording GPU
+//commands.
 //
 //@CLASSES:
 //  eng::rhi::vlk::CommandList: Vulkan backend for 'CommandListProtocol'.
@@ -80,8 +81,8 @@ class CommandList : public CommandListProtocol {
                      float y,
                      float width,
                      float height,
-                     float minDepth = 0.0f,
-                     float maxDepth = 1.0f) override;
+                     float minDepth,
+                     float maxDepth) override;
 
     /// Set the scissor rectangle.
     void
@@ -115,12 +116,13 @@ class CommandList : public CommandListProtocol {
 
     /// Bind the specified vertex 'buffer' to the specified 'binding' slot.
     void bindVertexBuffer(BufferProtocol* buffer,
-                          uint32_t        binding = 0,
-                          size_t          offset  = 0) override;
+                          uint32_t        binding,
+                          size_t          offset) override;
 
     // ACCESSORS
 
-    /// Return a const reference to the underlying Vulkan command buffer handle.
+    /// Return a const reference to the underlying Vulkan command buffer
+    /// handle.
     [[nodiscard]]
     const vk::raii::CommandBuffer& commandBuffer() const;
 };

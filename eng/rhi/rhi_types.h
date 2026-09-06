@@ -97,6 +97,7 @@ enum class ResourceType {
 enum class ShaderStage {
     Vertex,
     Fragment,
+    VertexFragment,
 };
 
 struct ResourceBinding {

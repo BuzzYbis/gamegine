@@ -134,13 +134,33 @@ std::shared_ptr<ModelData> ObjImporter::load(const std::string& filepath)
         }
     }
 
+    // Maps the path of an already imported texture to its position in the
+    // image collection of the model.
+    std::unordered_map<std::string, int> imageIndices;
+
     for (const auto& material : materials) {
         MaterialData materialData;
         materialData.name = material.name;
         if (!material.diffuse_texname.empty()) {
             std::string texPath = material.diffuse_texname;
             std::ranges::replace(texPath, '\\', '/');
-            materialData.diffuseTexturePath = baseDir + texPath;
+            texPath = baseDir + texPath;
+
+            // Materials commonly share a texture file, which must become a
+            // single image.
+            const auto [it, inserted] = imageIndices.try_emplace(
+                texPath,
+                static_cast<int>(modelData->images.size()));
+
+            if (inserted) {
+                ImageData imageData;
+                imageData.name = texPath;
+                imageData.path = texPath;
+
+                modelData->images.push_back(std::move(imageData));
+            }
+
+            materialData.baseColorImageIndex = it->second;
         }
 
         modelData->materials.push_back(materialData);

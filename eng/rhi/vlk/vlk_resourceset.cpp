@@ -55,6 +55,7 @@ void ResourceSet::updateBuffer(const uint32_t  binding,
 void ResourceSet::updateTexture(const uint32_t   binding,
                                 TextureProtocol* texture)
 {
+    // Cast the abtract interface (TextureProtocol) to the vlk_texture
     const auto* vlkTexture = static_cast<Texture*>(texture);
 
     // Bind the sampler and the view of the texture

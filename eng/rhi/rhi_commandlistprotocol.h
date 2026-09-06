@@ -57,8 +57,8 @@ class CommandListProtocol {
                              float y,
                              float width,
                              float height,
-                             float minDepth = 0.0f,
-                             float maxDepth = 1.0f) = 0;
+                             float minDepth,
+                             float maxDepth) = 0;
 
     /// Set the scissor rectangle for subsequent draw calls.
     virtual void
@@ -109,13 +109,12 @@ class CommandListProtocol {
 
     /// Bind the specified vertex 'buffer' to the specified 'binding' slot.
     virtual void bindVertexBuffer(BufferProtocol* buffer,
-                                  uint32_t        binding = 0,
-                                  size_t          offset  = 0) = 0;
+                                  uint32_t        binding,
+                                  size_t          offset) = 0;
 
     /// Bind the specified index 'buffer' for subsequent indexed draw
     /// calls.
-    virtual void bindIndexBuffer(BufferProtocol* buffer,
-                                 size_t          offset = 0) = 0;
+    virtual void bindIndexBuffer(BufferProtocol* buffer, size_t offset) = 0;
 };
 
 }  // close package namespace

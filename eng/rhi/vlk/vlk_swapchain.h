@@ -179,9 +179,17 @@ class Swapchain : public SwapchainProtocol {
     [[nodiscard]]
     vk::Image depthImage() const;
 
+    /// Return the raw Vulkan image handle of the color buffer.
+    [[nodiscard]]
+    vk::Image colorImage() const;
+
     /// Return the Vulkan image view of the depth buffer.
     [[nodiscard]]
     vk::ImageView depthImageView() const;
+
+    /// Return the Vulkan image view of the color buffer.
+    [[nodiscard]]
+    vk::ImageView colorImageView() const;
 
     /// Return the pixel format of the depth buffer.
     [[nodiscard]]
@@ -224,11 +232,20 @@ inline vk::Image Swapchain::depthImage() const
     return *d_depthImage;
 }
 
+inline vk::Image Swapchain::colorImage() const
+{
+    return *d_colorImage;
+}
+
 inline vk::ImageView Swapchain::depthImageView() const
 {
     return *d_depthImageView;
 }
 
+inline vk::ImageView Swapchain::colorImageView() const
+{
+    return *d_colorImageView;
+}
 inline vk::Format Swapchain::depthFormat() const
 {
     return d_depthFormat;

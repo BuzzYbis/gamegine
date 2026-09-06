@@ -24,6 +24,9 @@ vk::ShaderStageFlags getVkShaderStageFlags(ShaderStage stage)
     switch (stage) {
     case ShaderStage::Vertex: return vk::ShaderStageFlagBits::eVertex;
     case ShaderStage::Fragment: return vk::ShaderStageFlagBits::eFragment;
+    case ShaderStage::VertexFragment:
+        return vk::ShaderStageFlagBits::eVertex |
+               vk::ShaderStageFlagBits::eFragment;
     default: return vk::ShaderStageFlagBits::eAllGraphics;
     }
 }

@@ -1,4 +1,4 @@
-// vlk_texture.cpp                                                     -*-C++-*-
+// vlk_texture.cpp                                                    -*-C++-*-
 #include <rhi/vlk/vlk_texture.h>
 
 // rhi
@@ -18,12 +18,12 @@ namespace eng::rhi::vlk {
 // -------------
 
 // CREATORS
-Texture::Texture(Context*      context,
-                 const uint32_t width,
-                 const uint32_t height,
-                 const uint32_t mipLevels,
+Texture::Texture(Context*         context,
+                 const uint32_t   width,
+                 const uint32_t   height,
+                 const uint32_t   mipLevels,
                  const vk::Format format,
-                 const void*   pixels)
+                 const void*      pixels)
 : d_context_p(context)
 , d_width(width)
 , d_height(height)
@@ -34,15 +34,16 @@ Texture::Texture(Context*      context,
 , d_sampler(nullptr)
 {
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eSampled;
-    
-    if (pixels) {
-        usage |= vk::ImageUsageFlagBits::eTransferSrc | 
-                 vk::ImageUsageFlagBits::eTransferDst;
-                 
-        const vk::DeviceSize imageSize = static_cast<vk::DeviceSize>(width) *
-                                         static_cast<vk::DeviceSize>(height) * 4;
 
-        // 1. Create Staging Buffer
+    if (pixels) {
+        usage |= vk::ImageUsageFlagBits::eTransferSrc |
+                 vk::ImageUsageFlagBits::eTransferDst;
+
+        const vk::DeviceSize imageSize = static_cast<vk::DeviceSize>(width) *
+                                         static_cast<vk::DeviceSize>(height) *
+                                         4;
+
+        // Create Staging Buffer
         vk::BufferCreateInfo stagingInfo{};
         stagingInfo.size        = imageSize;
         stagingInfo.usage       = vk::BufferUsageFlagBits::eTransferSrc;
@@ -50,8 +51,9 @@ Texture::Texture(Context*      context,
 
         vk::raii::Buffer stagingBuffer(d_context_p->device(), stagingInfo);
 
-        const vk::MemoryRequirements memReq = stagingBuffer.getMemoryRequirements();
-        vk::MemoryAllocateInfo       allocInfo{};
+        const vk::MemoryRequirements memReq =
+            stagingBuffer.getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{};
         allocInfo.allocationSize  = memReq.size;
         allocInfo.memoryTypeIndex = Utils::findMemoryTypeIndex(
             d_context_p->physicalDevice(),
@@ -62,12 +64,12 @@ Texture::Texture(Context*      context,
         vk::raii::DeviceMemory stagingMemory(d_context_p->device(), allocInfo);
         stagingBuffer.bindMemory(*stagingMemory, 0);
 
-        // 2. Upload Pixels
+        // Upload Pixels
         void* data = stagingMemory.mapMemory(0, imageSize);
-        std::memcpy(data, pixels, static_cast<size_t>(imageSize));
+        std::memcpy(data, pixels, imageSize);
         stagingMemory.unmapMemory();
 
-        // 3. Create GPU Image
+        // Create GPU Image
         Utils::createImage(d_context_p,
                            width,
                            height,
@@ -80,9 +82,9 @@ Texture::Texture(Context*      context,
                            d_image,
                            d_memory);
 
-        // 4. Copy Buffer to Image
+        // Copy Buffer to Image
         vk::CommandPoolCreateInfo poolInfo{};
-        poolInfo.flags = vk::CommandPoolCreateFlagBits::eTransient;
+        poolInfo.flags            = vk::CommandPoolCreateFlagBits::eTransient;
         poolInfo.queueFamilyIndex = d_context_p->graphicsQueueFamilyIndex();
         vk::raii::CommandPool pool(d_context_p->device(), poolInfo);
 
@@ -123,13 +125,13 @@ Texture::Texture(Context*      context,
         d_context_p->graphicsQueue().submit(submitInfo, nullptr);
         d_context_p->graphicsQueue().waitIdle();
 
-        // 5. Mipmaps
+        // Mipmaps
         generateMipmaps(d_image, width, height, mipLevels);
     }
     else {
         // Render Target Case
         usage |= vk::ImageUsageFlagBits::eColorAttachment;
-        
+
         Utils::createImage(d_context_p,
                            width,
                            height,
@@ -144,7 +146,7 @@ Texture::Texture(Context*      context,
 
         // Transition to a state ready for sampling/rendering
         vk::CommandPoolCreateInfo poolInfo{};
-        poolInfo.flags = vk::CommandPoolCreateFlagBits::eTransient;
+        poolInfo.flags            = vk::CommandPoolCreateFlagBits::eTransient;
         poolInfo.queueFamilyIndex = d_context_p->graphicsQueueFamilyIndex();
         vk::raii::CommandPool pool(d_context_p->device(), poolInfo);
 
@@ -173,7 +175,7 @@ Texture::Texture(Context*      context,
         d_context_p->graphicsQueue().waitIdle();
     }
 
-    // 6. View & Sampler
+    // View & Sampler
     d_view = Utils::createImageView(d_context_p->device(),
                                     d_image,
                                     format,
@@ -188,8 +190,9 @@ Texture::Texture(Context*      context,
     samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
     samplerInfo.anisotropyEnable =
         d_context_p->physicalDevice().getFeatures().samplerAnisotropy;
-    samplerInfo.maxAnisotropy =
-        d_context_p->physicalDevice().getProperties().limits.maxSamplerAnisotropy;
+    samplerInfo.maxAnisotropy = d_context_p->physicalDevice()
+                                    .getProperties()
+                                    .limits.maxSamplerAnisotropy;
     samplerInfo.borderColor             = vk::BorderColor::eIntOpaqueBlack;
     samplerInfo.unnormalizedCoordinates = vk::False;
     samplerInfo.compareEnable           = vk::False;
@@ -205,10 +208,10 @@ Texture::Texture(Context*      context,
 void Texture::generateMipmaps(const vk::raii::Image& image,
                               const int32_t          texWidth,
                               const int32_t          texHeight,
-                              const uint32_t         mipLevels)
+                              const uint32_t         mipLevels) const
 {
     vk::CommandPoolCreateInfo poolInfo{};
-    poolInfo.flags = vk::CommandPoolCreateFlagBits::eTransient;
+    poolInfo.flags            = vk::CommandPoolCreateFlagBits::eTransient;
     poolInfo.queueFamilyIndex = d_context_p->graphicsQueueFamilyIndex();
     vk::raii::CommandPool pool(d_context_p->device(), poolInfo);
 
@@ -249,16 +252,16 @@ void Texture::generateMipmaps(const vk::raii::Image& image,
                             barrier);
 
         vk::ImageBlit blit{};
-        blit.srcOffsets[0] = vk::Offset3D(0, 0, 0);
-        blit.srcOffsets[1] = vk::Offset3D(mipWidth, mipHeight, 1);
-        blit.srcSubresource.aspectMask     = vk::ImageAspectFlagBits::eColor;
-        blit.srcSubresource.mipLevel       = i - 1;
+        blit.srcOffsets[0]             = vk::Offset3D(0, 0, 0);
+        blit.srcOffsets[1]             = vk::Offset3D(mipWidth, mipHeight, 1);
+        blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        blit.srcSubresource.mipLevel   = i - 1;
         blit.srcSubresource.baseArrayLayer = 0;
         blit.srcSubresource.layerCount     = 1;
         blit.dstOffsets[0]                 = vk::Offset3D(0, 0, 0);
-        blit.dstOffsets[1]                 = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
-                                            mipHeight > 1 ? mipHeight / 2 : 1,
-                                            1);
+        blit.dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
+                                          mipHeight > 1 ? mipHeight / 2 : 1,
+                                          1);
         blit.dstSubresource.aspectMask     = vk::ImageAspectFlagBits::eColor;
         blit.dstSubresource.mipLevel       = i;
         blit.dstSubresource.baseArrayLayer = 0;

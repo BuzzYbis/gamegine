@@ -38,13 +38,18 @@ int main()
 
         auto& cameraTransform =
             cameraEntity.getComponent<comp::TransformComponent>();
-        cameraTransform.setPosition({-10.0F, 1.5F, 0.0F});
-        cameraTransform.setRotation({0.0F, 0.0F, 0.0F});
+        cameraTransform.setPosition({0.0F, 0.0F, 0.0F});
+        cameraTransform.setRotation({0.F, 0.0F, 0.0F});
 
         const auto [meshes, materials] = engine->assetManager()->loadMesh(
-            "models/sponza/sponza.obj");
+            //    "models/StainedGlassLamp/glTF-KTX-BasisU/StainedGlassLamp.gltf");
+            //    "models/AnisotropyBarnLamp/glTF-KTX-BasisU/"
+            //    "AnisotropyBarnLamp.gltf");
+            //    "models/glTF/DamagedHelmet.gltf");
+            //"models/chest/chest.glb");
+            "models/bistro/bistro.gltf");
 
-        auto entity      = engine->createEntity("Sponza (OBJre)");
+        auto entity      = engine->createEntity("DamagedHelmet (gltf)");
         auto& [meshCompMesh,
                material] = entity.addComponent<comp::MeshComponent>();
         meshCompMesh     = meshes;
@@ -52,7 +57,10 @@ int main()
 
         auto& entityTransform =
             entity.getComponent<comp::TransformComponent>();
-        entityTransform.setScale({0.01F, 0.01F, 0.01F});
+        entityTransform.setScale({10.0F, 10.0F, 10.0F});
+        entityTransform.setPosition({1.5F, -0.3F, 0.0F});
+        entityTransform.setRotation(
+            {glm::radians(0.0F), glm::radians(0.0F), glm::radians(0.0F)});
 
         engine->run();
     }

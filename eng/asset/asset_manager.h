@@ -29,8 +29,12 @@
 #include <rhi/rhi_contextprotocol.h>
 #include <rhi/rhi_resourcelayoutprotocol.h>
 #include <rhi/rhi_resourcesetprotocol.h>
+#include <rhi/rhi_types.h>
 
 namespace eng::asset {
+
+// Forward declarations
+struct ImageData;
 
 /// This structure stores the set of meshes and materials imported from a
 /// single model file.
@@ -51,7 +55,10 @@ class AssetManager {
     rhi::ContextProtocol* d_context_p;
     rnd::Renderer*        d_renderer_p;
 
-    std::unique_ptr<rhi::ResourceLayoutProtocol> d_materialLayout;
+    /// The textures loaded so far, keyed by the name of their image and the
+    /// format they were uploaded with. The format belongs in the key because
+    /// a single file read as a base color and as a roughness map yields two
+    /// distinct GPU resources.
     std::unordered_map<std::string, std::unique_ptr<rnd::Texture> > d_textures;
     std::vector<std::unique_ptr<rnd::Material> >            d_materials;
     std::vector<std::unique_ptr<rhi::ResourceSetProtocol> > d_resourceSets;
@@ -71,9 +78,25 @@ class AssetManager {
 
     // MANIPULATORS
 
-    /// Load and return a pointer to the texture at the specified 'filePath'.
-    /// Return the cached texture if it was already loaded.
-    rnd::Texture* loadMaterial(const std::string& filePath);
+    /// Load and return a pointer to the texture at the specified 'filePath',
+    /// giving its pixels the specified 'format' on the device. Return the
+    /// cached texture if it was already loaded under 'format'.
+    rnd::Texture*
+    loadMaterial(const std::string& filePath,
+                 rhi::Format        format = rhi::Format::R8G8B8A8_SRGB);
+
+    /// Load and return a pointer to the texture described by the specified
+    /// 'image', decoding its embedded bytes when it carries some, and reading
+    /// its file otherwise, giving its pixels the specified 'format' on the
+    /// device. Return the cached texture if 'image' was already loaded under
+    /// 'format', and an empty pointer if it holds no loadable image.
+    rnd::Texture* loadImage(const ImageData& image, rhi::Format format);
+
+    /// Return a pointer to the single pixel texture standing in for the
+    /// specified 'slot' when a material declares no texture for it: an image
+    /// neutral for the factor of that slot, so that the factor alone
+    /// describes the material.
+    rnd::Texture* neutralTexture(rnd::TextureSlot slot);
 
     /// Create and return a pointer to a new empty material.
     rnd::Material* createMaterial();

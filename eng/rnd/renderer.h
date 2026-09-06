@@ -31,6 +31,9 @@
 #include <rhi/rhi_resourcesetprotocol.h>
 #include <rhi/rhi_swapchainprotocol.h>
 
+// renderer
+#include <rnd/material.h>
+
 // scene
 #include <scn/scn_scene.h>
 
@@ -71,6 +74,15 @@ class Renderer {
     /// Create the internal graphics pipelines (PBR, Wireframe, etc.).
     void createPipelines();
 
+    // PRIVATE ACCESSORS
+
+    /// Record into the specified 'cmd' the draw commands of every mesh of
+    /// the specified 'scene' whose material is blended if the specified
+    /// 'blended' is 'true', and of every other mesh otherwise.
+    void drawMeshes(rhi::CommandListProtocol* cmd,
+                    scn::Scene&               scene,
+                    bool                      blended) const;
+
   public:
     // CREATORS
 
@@ -94,7 +106,7 @@ class Renderer {
     rhi::CommandListProtocol* beginFrame(scn::Scene& scene);
 
     /// Set the current rendering destination to the swapchain's back buffer.
-    void beginSwapchainPass(rhi::CommandListProtocol* cmd);
+    void beginSwapchainPass(rhi::CommandListProtocol* cmd) const;
 
     /// Finalize the current frame, submit command lists to the GPU, and
     /// request presentation to the screen.
@@ -126,6 +138,14 @@ class Renderer {
     /// 'name'. Return null if no such pipeline exists.
     [[nodiscard]]
     rhi::PipelineProtocol* getPipeline(const std::string& name) const;
+
+    /// Return a pointer to the pipeline a material of the specified 'mode'
+    /// and 'doubleSided' is to be drawn with. Masked and opaque materials
+    /// share a pipeline: masking is a discard in the fragment shader, which
+    /// no pipeline state expresses.
+    [[nodiscard]]
+    rhi::PipelineProtocol* materialPipeline(AlphaMode mode,
+                                            bool      doubleSided) const;
 
     /// Return a pointer to the resource layout used for materials.
     [[nodiscard]]

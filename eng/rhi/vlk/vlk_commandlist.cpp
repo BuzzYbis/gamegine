@@ -7,7 +7,6 @@
 #include <rhi/vlk/vlk_pipeline.h>
 #include <rhi/vlk/vlk_resourceset.h>
 #include <rhi/vlk/vlk_swapchain.h>
-#include <rhi/vlk/vlk_texture.h>
 
 namespace eng::rhi::vlk {
 
@@ -43,7 +42,7 @@ CommandList::CommandList(Context* context)
 void CommandList::begin()
 {
     // Start recording.
-    const vk::CommandBufferBeginInfo beginInfo{};
+    constexpr vk::CommandBufferBeginInfo beginInfo{};
     d_commandBuffer.begin(beginInfo);
 }
 
@@ -119,11 +118,11 @@ void CommandList::beginSwapchainRendering(SwapchainProtocol* swapchain,
     const vk::Image     swapchainImage = vlkSwapchain->image(imageIndex);
     const vk::ImageView swapchainView  = vlkSwapchain->imageView(imageIndex);
 
-    // 1. Barrier for Color (Undefined -> ColorAttachmentOptimal)
+    // Barrier for Color (Undefined -> ColorAttachmentOptimal)
     vk::ImageMemoryBarrier colorBarrier{};
     colorBarrier.oldLayout        = vk::ImageLayout::eUndefined;
     colorBarrier.newLayout        = vk::ImageLayout::eColorAttachmentOptimal;
-    colorBarrier.image            = swapchainImage;
+    colorBarrier.image            = vlkSwapchain->colorImage();
     colorBarrier.subresourceRange = {vk::ImageAspectFlagBits::eColor,
                                      0,
                                      1,
@@ -139,7 +138,26 @@ void CommandList::beginSwapchainRendering(SwapchainProtocol* swapchain,
         nullptr,
         colorBarrier);
 
-    // 2. Barrier for Depth
+    vk::ImageMemoryBarrier targetBarrier{};
+    targetBarrier.oldLayout        = vk::ImageLayout::eUndefined;
+    targetBarrier.newLayout        = vk::ImageLayout::eColorAttachmentOptimal;
+    targetBarrier.image            = swapchainImage;
+    targetBarrier.subresourceRange = {vk::ImageAspectFlagBits::eColor,
+                                      0,
+                                      1,
+                                      0,
+                                      1};
+    targetBarrier.dstAccessMask    = vk::AccessFlagBits::eColorAttachmentWrite;
+
+    d_commandBuffer.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        {},
+        nullptr,
+        nullptr,
+        targetBarrier);
+
+    // Barrier for Depth
     vk::ImageMemoryBarrier depthBarrier{};
     depthBarrier.oldLayout        = vk::ImageLayout::eUndefined;
     depthBarrier.newLayout        = vk::ImageLayout::eDepthAttachmentOptimal;
@@ -162,16 +180,20 @@ void CommandList::beginSwapchainRendering(SwapchainProtocol* swapchain,
         nullptr,
         depthBarrier);
 
-    // 3. Attachments
+    // Attachments
     vk::RenderingAttachmentInfo colorAttachment{};
-    colorAttachment.imageView   = swapchainView;
+    colorAttachment.imageView   = vlkSwapchain->colorImageView();
     colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colorAttachment.loadOp      = vk::AttachmentLoadOp::eClear;
-    colorAttachment.storeOp     = vk::AttachmentStoreOp::eStore;
+    colorAttachment.storeOp     = vk::AttachmentStoreOp::eDontCare;
     colorAttachment.clearValue  = vk::ClearColorValue(clearColor.r,
                                                      clearColor.g,
                                                      clearColor.b,
                                                      clearColor.a);
+    colorAttachment.resolveMode = vk::ResolveModeFlagBits::eAverage;
+    colorAttachment.resolveImageView = swapchainView;
+    colorAttachment.resolveImageLayout =
+        vk::ImageLayout::eColorAttachmentOptimal;
 
     vk::RenderingAttachmentInfo depthAttachment{};
     depthAttachment.imageView   = vlkSwapchain->depthImageView();
@@ -180,7 +202,7 @@ void CommandList::beginSwapchainRendering(SwapchainProtocol* swapchain,
     depthAttachment.storeOp     = vk::AttachmentStoreOp::eDontCare;
     depthAttachment.clearValue  = vk::ClearDepthStencilValue(1.0f, 0);
 
-    // 4. Begin Rendering
+    // Begin Rendering
     vk::RenderingInfo renderingInfo{};
     renderingInfo.renderArea = vk::Rect2D{
         {0, 0},
@@ -194,12 +216,12 @@ void CommandList::beginSwapchainRendering(SwapchainProtocol* swapchain,
 }
 
 void CommandList::endSwapchainRendering(SwapchainProtocol* swapchain,
-                                        uint32_t           imageIndex)
+                                        const uint32_t     imageIndex)
 {
-    // 1. D'ABORD LE END RENDERING ! (On signale qu'on a fini de peindre)
+    // End the rendering first, signaling that painting is done.
     d_commandBuffer.endRendering();
 
-    // 2. ENSUITE LA BARRIÈRE ! (On envoie l'image à l'écran)
+    // Then the barrier, handing the image over to the screen.
     const auto*     vlkSwapchain = static_cast<Swapchain*>(swapchain);
     const vk::Image image        = vlkSwapchain->image(imageIndex);
 
@@ -220,9 +242,9 @@ void CommandList::endSwapchainRendering(SwapchainProtocol* swapchain,
 }
 
 void CommandList::pushConstants(PipelineProtocol* pipeline,
-                                ShaderStage       stage,
-                                uint32_t          offset,
-                                uint32_t          size,
+                                const ShaderStage stage,
+                                const uint32_t    offset,
+                                const uint32_t    size,
                                 const void*       data)
 {
     const auto*                vlkPipeline = static_cast<Pipeline*>(pipeline);
@@ -253,19 +275,19 @@ void CommandList::bindResourceSet(PipelineProtocol*    pipeline,
 }
 
 void CommandList::bindVertexBuffer(BufferProtocol* buffer,
-                                   uint32_t        binding,
-                                   size_t          offset)
+                                   const uint32_t  binding,
+                                   const size_t    offset)
 {
-    auto*          vlkBuffer = static_cast<Buffer*>(buffer);
-    vk::Buffer     vkBuf     = *vlkBuffer->buffer();
-    vk::DeviceSize vkOffset  = offset;
+    const auto*          vlkBuffer = static_cast<Buffer*>(buffer);
+    const vk::Buffer     vkBuf     = *vlkBuffer->buffer();
+    const vk::DeviceSize vkOffset  = offset;
 
     d_commandBuffer.bindVertexBuffers(binding, vkBuf, vkOffset);
 }
 
-void CommandList::bindIndexBuffer(BufferProtocol* buffer, size_t offset)
+void CommandList::bindIndexBuffer(BufferProtocol* buffer, const size_t offset)
 {
-    auto* vlkBuffer = static_cast<Buffer*>(buffer);
+    const auto* vlkBuffer = static_cast<Buffer*>(buffer);
 
     d_commandBuffer.bindIndexBuffer(*vlkBuffer->buffer(),
                                     offset,

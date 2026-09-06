@@ -47,7 +47,7 @@ class Texture : public TextureProtocol {
     void generateMipmaps(const vk::raii::Image& image,
                          int32_t                texWidth,
                          int32_t                texHeight,
-                         uint32_t               mipLevels);
+                         uint32_t               mipLevels) const;
 
   public:
     // CREATORS

@@ -11,6 +11,7 @@ include(${GAMEGINE_ROOT}/cmake/deps/glm.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/stb.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/tinyobjloader.cmake)
 include(${GAMEGINE_ROOT}/cmake/deps/tinygltfloader.cmake)
+include(${GAMEGINE_ROOT}/cmake/deps/ktx.cmake)
 
 # --- Target Definition ---
 add_library(eng STATIC)
@@ -120,6 +121,8 @@ target_sources(eng PRIVATE
         asset/asset_modeldata.h
         asset/impt/impt_obj.cpp
         asset/impt/impt_obj.h
+        asset/impt/impt_gltf.cpp
+        asset/impt/impt_gltf.h
         asset/impt/impt_model.h
 )
 
@@ -127,6 +130,12 @@ target_sources(eng PRIVATE
 target_include_directories(eng
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Third-party headers are marked SYSTEM so that their own warnings do not
+# pollute the build of the engine.
+target_include_directories(eng SYSTEM
+        PUBLIC
         ${IMGUI_DIR}
         ${TINY_GLTF_DIR}
         ${FASTNOISE_INCLUDE_DIR}
@@ -160,6 +169,7 @@ target_link_libraries(eng PUBLIC
         glm::glm
         stb::stb
         tinyobjloader::tinyobjloader
+        KTX::ktx
 )
 
 # --- Warnings ---
