@@ -119,11 +119,16 @@ Texture::Texture(Context*         context,
 
         cmd.end();
 
+        // Synchronous texture upload: blocks the CPU thread until this batch
+        // completes. Safer and more granular than waitIdle(), but still stalls
+        // the pipeline.
+        vk::raii::Fence fence(d_context_p->device(), vk::FenceCreateInfo{});
+
         vk::SubmitInfo submitInfo{};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers    = &*cmd;
-        d_context_p->graphicsQueue().submit(submitInfo, nullptr);
-        d_context_p->graphicsQueue().waitIdle();
+        d_context_p->graphicsQueue().submit(submitInfo, *fence);
+        (void)d_context_p->device().waitForFences(*fence, VK_TRUE, UINT64_MAX);
 
         // Mipmaps
         generateMipmaps(d_image, width, height, mipLevels);
