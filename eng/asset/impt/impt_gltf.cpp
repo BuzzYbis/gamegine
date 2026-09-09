@@ -502,7 +502,7 @@ void processNode(const tinygltf::Model&               model,
             instance.meshDataIndex  = primitiveMeshMap[node.mesh][p];
             instance.materialIndex  = mesh.primitives[p].material;
             instance.worldTransform = worldTransform;
-            modelData.instanceDatas.push_back(instance);
+            modelData.instanceData.push_back(instance);
         }
     }
 

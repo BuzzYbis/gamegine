@@ -399,7 +399,7 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
         }
     }
 
-    result.instanceData = data->instanceDatas;
+    result.instanceData = data->instanceData;
 
     d_models[filePath] = result;
     return result;

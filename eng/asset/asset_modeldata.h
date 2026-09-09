@@ -130,7 +130,7 @@ struct InstanceData {
 /// model file.
 struct ModelData {
     std::vector<MeshData>     meshes;
-    std::vector<InstanceData> instanceDatas;
+    std::vector<InstanceData> instanceData;
     std::vector<MaterialData> materials;
     std::vector<ImageData>    images;
 };
