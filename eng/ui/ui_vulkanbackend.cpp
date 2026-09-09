@@ -83,6 +83,12 @@ void VulkanBackend::initialize(rhi::ContextProtocol*   context,
         .depthAttachmentFormat = static_cast<VkFormat>(
         vlkSwapchain->depthFormat());
 
+    // The UI is drawn inside the very pass the scene is rendered into, whose
+    // attachments are multisampled, so its pipeline has to rasterize as many
+    // samples as they hold. The backend defaults this to a single sample.
+    init_info.PipelineInfoMain.MSAASamples =
+        static_cast<VkSampleCountFlagBits>(vlkContext->msaaSamples());
+
     ImGui_ImplVulkan_Init(&init_info);
 }
 

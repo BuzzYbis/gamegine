@@ -16,6 +16,35 @@ include(${GAMEGINE_ROOT}/cmake/deps/ktx.cmake)
 # --- Target Definition ---
 add_library(eng STATIC)
 
+# Profiling instrumentation. When disabled, the 'ENG_PROFILE_*' macros expand
+# to nothing and the engine pays for no sample at all.
+option(GAMEGINE_ENABLE_PROFILING "Enable the in-engine profiler" ON)
+if (GAMEGINE_ENABLE_PROFILING)
+    target_compile_definitions(eng PUBLIC ENG_ENABLE_PROFILING)
+endif ()
+
+# --- Build Information ---
+# The identity of the build is captured at build time rather than at
+# configure time, so that a benchmark row records the commit that actually
+# produced the binary.
+set(ENG_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(ENG_BUILDINFO_HEADER ${ENG_GENERATED_DIR}/core/core_buildinfo.h)
+
+add_custom_target(eng_buildinfo
+        COMMAND ${CMAKE_COMMAND}
+        -DSRC=${GAMEGINE_ROOT}
+        -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/core/core_buildinfo.h.in
+        -DOUTPUT=${ENG_BUILDINFO_HEADER}
+        -DENG_VERSION=${CMAKE_PROJECT_VERSION}
+        -DENG_BUILD_TYPE=$<CONFIG>
+        -DENG_COMPILER=${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}
+        -P ${GAMEGINE_ROOT}/cmake/git_info.cmake
+        BYPRODUCTS ${ENG_BUILDINFO_HEADER}
+        COMMENT "Capturing build information..."
+)
+
+add_dependencies(eng eng_buildinfo)
+
 # --- Source Organization ---
 
 # 1. Third Party: ImGui
@@ -44,6 +73,8 @@ target_sources(eng PRIVATE
         core/core_log.h
         core/core_vertex.h
         core/core_instance.h
+        core/core_profiler.cpp
+        core/core_profiler.h
 )
 
 # 3. Renderer & RHI (Vulkan)
@@ -113,6 +144,9 @@ target_sources(eng PRIVATE
         ui/ui_factory.cpp
         ui/ui_factory.h
         ui/ui_backendprotocol.h
+        ui/ui_panel.h
+        ui/pnl/pnl_profiler.cpp
+        ui/pnl/pnl_profiler.h
 )
 
 # 5. Assets & Importers
@@ -121,6 +155,8 @@ target_sources(eng PRIVATE
         asset/asset_manager.cpp
         asset/asset_manager.h
         asset/asset_modeldata.h
+        asset/asset_benchmark.cpp
+        asset/asset_benchmark.h
         asset/impt/impt_gltf.cpp
         asset/impt/impt_gltf.h
         asset/impt/impt_model.h
@@ -130,6 +166,7 @@ target_sources(eng PRIVATE
 target_include_directories(eng
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ENG_GENERATED_DIR}
 )
 
 # Third-party headers are marked SYSTEM so that their own warnings do not

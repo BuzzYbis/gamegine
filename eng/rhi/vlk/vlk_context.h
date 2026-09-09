@@ -174,6 +174,10 @@ class Context : public ContextProtocol {
 
     // ACCESSORS
 
+    /// Return the name of the physical device this context runs on.
+    [[nodiscard]]
+    std::string deviceName() const override;
+
     /// Return a const reference to the Vulkan Instance.
     [[nodiscard]]
     const vk::raii::Instance& instance() const;

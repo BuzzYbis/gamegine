@@ -1,6 +1,9 @@
 // impt_gltf.cpp                                                      -*-C++-*-
 #include <asset/impt/impt_gltf.h>
 
+// core
+#include <core/core_profiler.h>
+
 // std
 #include <algorithm>
 #include <cstddef>
@@ -533,11 +536,15 @@ std::shared_ptr<ModelData> GltfImporter::load(const std::string& filepath)
     const std::filesystem::path path(filepath);
     bool                        result;
 
-    if (path.extension() == ".glb") {
-        result = loader.LoadBinaryFromFile(&model, &err, &warn, filepath);
-    }
-    else {
-        result = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
+    {
+        ENG_PROFILE_SCOPE("Load Parse");
+
+        if (path.extension() == ".glb") {
+            result = loader.LoadBinaryFromFile(&model, &err, &warn, filepath);
+        }
+        else {
+            result = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
+        }
     }
 
     if (!warn.empty()) {
@@ -563,14 +570,31 @@ std::shared_ptr<ModelData> GltfImporter::load(const std::string& filepath)
     std::shared_ptr<ModelData> modelData = std::make_shared<ModelData>();
 
     std::vector<std::vector<uint32_t> > primitiveMeshMap(model.meshes.size());
-    modelData->meshes    = readMeshes(model, primitiveMeshMap);
-    modelData->materials = readMaterials(model);
-    modelData->images    = readImages(model, path);
+
+    {
+        ENG_PROFILE_SCOPE("Load Geometry");
+        modelData->meshes = readMeshes(model, primitiveMeshMap);
+    }
+
+    {
+        ENG_PROFILE_SCOPE("Load Material Data");
+        modelData->materials = readMaterials(model);
+    }
+
+    // Only the images the file carries itself are read here; the ones it
+    // merely points at are opened by the texture that decodes them, and
+    // hence weigh on 'Load Textures' instead.
+    {
+        ENG_PROFILE_SCOPE("Load Image Scan");
+        modelData->images = readImages(model, path);
+    }
 
     constexpr glm::mat4    rootTransform = glm::mat4(1.0f);
     const tinygltf::Scene& scene         = model.scenes[sceneIndex];
 
     try {
+        ENG_PROFILE_SCOPE("Load Node Graph");
+
         for (const int nodeIndex : scene.nodes) {
             processNode(model,
                         nodeIndex,

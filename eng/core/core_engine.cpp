@@ -2,6 +2,7 @@
 #include <core/core_engine.h>
 
 // core
+#include <core/core_profiler.h>
 #include <core/core_steptimer.h>
 
 // rhi
@@ -11,6 +12,9 @@
 #include <scn/comp/comp_mesh.h>
 #include <scn/scn_entity.h>
 #include <scn/scn_scene.h>
+
+// ui
+#include <ui/pnl/pnl_profiler.h>
 
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
@@ -57,45 +61,96 @@ void Engine::initialize(const char* title, const int width, const int height)
                             d_renderer->swapchain(),
                             *d_window,
                             api);
+
+    d_uiManager->addPanel(
+        std::make_unique<ui::ProfilerPanel>(&Profiler::instance()));
 }
 
 void Engine::run()
 {
     d_timer.reset();
 
+    Profiler& profiler = Profiler::instance();
+
     while (!d_window->shouldClose()) {
         d_timer.tick();
         const float dt = d_timer.releaseDeltaTime();
 
-        d_window->pollEvents();
-        d_inputManager->update(d_window.get(), dt);
+        profiler.beginFrame();
+
+        // The frame is timed here rather than taken from the step timer, so
+        // that the total and the scopes that break it down describe one and
+        // the same frame.
+        const auto frameStart = StepTimer::Clock::now();
+
+        {
+            ENG_PROFILE_SCOPE("Input");
+            d_window->pollEvents();
+            d_inputManager->update(d_window.get(), dt);
+        }
 
         // Setup UI
-        d_uiManager->beginFrame();
+        {
+            ENG_PROFILE_SCOPE("UI Begin");
+            d_uiManager->beginFrame();
+        }
 
         // Game logic (ECS)
-        d_systemManager->updateAll(d_scene->registry(), *d_inputManager, dt);
+        {
+            ENG_PROFILE_SCOPE("ECS Update");
+            d_systemManager->updateAll(d_scene->registry(),
+                                       *d_inputManager,
+                                       dt);
+        }
 
-        d_uiManager->renderPanels();
+        {
+            ENG_PROFILE_SCOPE("UI Panels");
+            d_uiManager->renderPanels();
+        }
 
-        rhi::CommandListProtocol* cmd = d_renderer->beginFrame(*d_scene);
+        // The image acquisition and the fence wait live here: keeping them
+        // in a scope of their own is what tells a stalled CPU apart from a
+        // saturated GPU.
+        rhi::CommandListProtocol* cmd = nullptr;
+        {
+            ENG_PROFILE_SCOPE("GPU Wait");
+            cmd = d_renderer->beginFrame(*d_scene);
+        }
 
         if (cmd) {
-            // 1. Start swapchain rendering pass
-            d_renderer->beginSwapchainPass(cmd);
+            {
+                ENG_PROFILE_SCOPE("Record");
 
-            // 2. Render scene directly into the swapchain
-            d_renderer->renderScene(cmd, *d_scene);
+                // 1. Start swapchain rendering pass
+                d_renderer->beginSwapchainPass(cmd);
+
+                // 2. Render scene directly into the swapchain
+                d_renderer->renderScene(cmd, *d_scene);
+            }
 
             // 3. Render UI into the swapchain pass
-            d_uiManager->endFrame(cmd);
+            {
+                ENG_PROFILE_SCOPE("UI Draw");
+                d_uiManager->endFrame(cmd);
+            }
 
             // 4. Submit and present
-            d_renderer->endFrame(cmd);
+            {
+                ENG_PROFILE_SCOPE("Submit");
+                d_renderer->endFrame(cmd);
+            }
         }
         else {
             d_uiManager->cleanUpFrame();
         }
+
+        ENG_PROFILE_COUNTER("Entities",
+                            static_cast<int64_t>(d_scene->registry().alive()));
+
+        const std::chrono::duration<float, std::milli> frameMs =
+            StepTimer::Clock::now() - frameStart;
+
+        profiler.endFrame(frameMs.count());
     }
 }
 

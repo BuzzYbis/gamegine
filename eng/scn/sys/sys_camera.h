@@ -32,6 +32,15 @@ class CameraSystem : public ISystem {
     void update(entt::registry&     registry,
                 core::InputManager& inputManager,
                 float               dt) override;
+
+    // ACCESSORS
+
+    /// Return the name under which this system is profiled.
+    [[nodiscard]]
+    const char* name() const override
+    {
+        return "Camera System";
+    }
 };
 
 }  // close package namespace

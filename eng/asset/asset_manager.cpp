@@ -1,6 +1,9 @@
 // asset_manager.cpp                                                  -*-C++-*-
 #include <asset/asset_manager.h>
 
+// core
+#include <core/core_profiler.h>
+
 // std
 #include <array>
 #include <filesystem>
@@ -19,6 +22,20 @@ namespace {
 
 /// Return a key identifying, in the texture cache, the image of the
 /// specified 'name' uploaded with the specified 'format'.
+/// Return the size of the file at the specified 'path', or 0 if it cannot be
+/// read.
+uintmax_t fileSizeOf(const std::string& path)
+{
+    if (path.empty()) {
+        return 0;
+    }
+
+    std::error_code error;
+    const uintmax_t size = std::filesystem::file_size(path, error);
+
+    return error ? 0 : size;
+}
+
 std::string makeTextureKey(const std::string& name, const rhi::Format format)
 {
     return name + '|' + std::to_string(static_cast<int>(format));
@@ -145,8 +162,21 @@ rnd::Texture* AssetManager::loadImage(const ImageData&  image,
 
     const auto it = d_textures.find(key);
     if (it != d_textures.end()) {
+        ENG_PROFILE_COUNTER("Textures Cached", 1);
         return it->second.get();
     }
+
+    ENG_PROFILE_SCOPE("Load Textures");
+    ENG_PROFILE_COUNTER("Textures Uploaded", 1);
+
+    // A file the model merely points at is opened by the texture itself, so
+    // its weight has to be read from the file system rather than from the
+    // bytes the importer carried.
+    ENG_PROFILE_COUNTER("Image KB",
+                        static_cast<int64_t>(image.encoded.empty()
+                                                 ? fileSizeOf(image.path)
+                                                 : image.encoded.size()) /
+                            1024);
 
     std::unique_ptr<rnd::Texture> texture;
 
@@ -224,6 +254,8 @@ rnd::Material* AssetManager::createMaterial()
 
 LoadedModel AssetManager::loadMesh(const std::string& filePath)
 {
+    ENG_PROFILE_SCOPE("Load Model");
+
     const auto it = d_models.find(filePath);
     if (it != d_models.end()) {
         std::cout << "[AssetManager] Returning cached mesh: " << filePath
@@ -271,78 +303,102 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
                                   rnd::TextureSlot::Emissive};
 
     std::vector<rnd::Material*> uniqueMaterials;
-    for (const MaterialData& materialData : data->materials) {
-        rnd::Material* mat = createMaterial();
+    ENG_PROFILE_COUNTER("Loaded Images",
+                        static_cast<int64_t>(data->images.size()));
 
-        auto resourceSet = d_context_p->createResourceSet(
-            d_renderer_p->materialLayout());
+    {
+        ENG_PROFILE_SCOPE("Load Materials");
 
-        for (const rnd::TextureSlot slot : slots) {
-            const int imageIndex = imageIndexForSlot(materialData, slot);
+        for (const MaterialData& materialData : data->materials) {
+            rnd::Material* mat = createMaterial();
 
-            rnd::Texture* tex = nullptr;
+            auto resourceSet = d_context_p->createResourceSet(
+                d_renderer_p->materialLayout());
 
-            if (imageIndex > -1 &&
-                imageIndex < static_cast<int>(data->images.size())) {
-                tex = loadImage(data->images[imageIndex], formatForSlot(slot));
+            for (const rnd::TextureSlot slot : slots) {
+                const int imageIndex = imageIndexForSlot(materialData, slot);
 
-                // The material meant to carry a texture here and the file
-                // could not be read, which the checkerboard makes visible
-                // rather than passing for a plain surface.
-                if (!tex && slot == rnd::TextureSlot::BaseColor) {
-                    tex = loadMaterial("textures/no_texture.png");
+                rnd::Texture* tex = nullptr;
+
+                if (imageIndex > -1 &&
+                    imageIndex < static_cast<int>(data->images.size())) {
+                    tex = loadImage(data->images[imageIndex],
+                                    formatForSlot(slot));
+
+                    // The material meant to carry a texture here and the file
+                    // could not be read, which the checkerboard makes visible
+                    // rather than passing for a plain surface.
+                    if (!tex && slot == rnd::TextureSlot::BaseColor) {
+                        tex = loadMaterial("textures/no_texture.png");
+                    }
                 }
+
+                // A slot left empty is not an error: the factor of that slot
+                // then describes the material on its own.
+                if (!tex) {
+                    tex = neutralTexture(slot);
+                }
+
+                mat->setTexture(slot, tex);
+                resourceSet->updateTexture(static_cast<uint32_t>(slot),
+                                           tex->protocol());
             }
 
-            // A slot left empty is not an error: the factor of that slot
-            // then describes the material on its own.
-            if (!tex) {
-                tex = neutralTexture(slot);
-            }
+            mat->setParams(toMaterialParams(materialData));
+            mat->setAlphaMode(toRenderAlphaMode(materialData));
+            mat->setDoubleSided(materialData.doubleSided);
+            mat->setPipeline(
+                d_renderer_p->materialPipeline(mat->alphaMode(),
+                                               mat->doubleSided()));
 
-            mat->setTexture(slot, tex);
-            resourceSet->updateTexture(static_cast<uint32_t>(slot),
-                                       tex->protocol());
+            resourceSet->updateBuffer(rnd::k_PARAMS_BINDING,
+                                      mat->paramsUbo(),
+                                      0,
+                                      0);
+
+            mat->setResourceSet(resourceSet.get());
+            d_resourceSets.push_back(std::move(resourceSet));
+
+            uniqueMaterials.push_back(mat);
         }
-
-        mat->setParams(toMaterialParams(materialData));
-        mat->setAlphaMode(toRenderAlphaMode(materialData));
-        mat->setDoubleSided(materialData.doubleSided);
-        mat->setPipeline(d_renderer_p->materialPipeline(mat->alphaMode(),
-                                                        mat->doubleSided()));
-
-        resourceSet->updateBuffer(rnd::k_PARAMS_BINDING,
-                                  mat->paramsUbo(),
-                                  0,
-                                  0);
-
-        mat->setResourceSet(resourceSet.get());
-        d_resourceSets.push_back(std::move(resourceSet));
-
-        uniqueMaterials.push_back(mat);
     }
+
     result.materials = uniqueMaterials;
     result.meshes.reserve(data->meshes.size());
 
-    for (const auto& [vertices, indices, materialIndex] : data->meshes) {
-        const auto mesh = std::make_shared<rnd::Mesh>(d_context_p,
-                                                      vertices,
-                                                      indices);
+    {
+        ENG_PROFILE_SCOPE("Load Buffers");
 
-        rnd::Material* mat          = nullptr;
-        int            safeMatIndex = materialIndex;
-        if (safeMatIndex < 0) {
-            safeMatIndex = 0;
-        }
+        for (const auto& [vertices, indices, materialIndex] : data->meshes) {
+            const auto mesh = std::make_shared<rnd::Mesh>(d_context_p,
+                                                          vertices,
+                                                          indices);
 
-        if (safeMatIndex < static_cast<int>(uniqueMaterials.size())) {
-            mat = uniqueMaterials[safeMatIndex];
+            ENG_PROFILE_COUNTER("Loaded Meshes", 1);
+            ENG_PROFILE_COUNTER("Loaded Triangles",
+                                static_cast<int64_t>(indices.size()) / 3);
+            ENG_PROFILE_COUNTER(
+                "Geometry KB",
+                static_cast<int64_t>(vertices.size() * sizeof(core::Vertex) +
+                                     indices.size() * sizeof(uint32_t)) /
+                    1024);
+
+            rnd::Material* mat          = nullptr;
+            int            safeMatIndex = materialIndex;
+            if (safeMatIndex < 0) {
+                safeMatIndex = 0;
+            }
+
+            if (safeMatIndex < static_cast<int>(uniqueMaterials.size())) {
+                mat = uniqueMaterials[safeMatIndex];
+            }
+            else {
+                mat = uniqueMaterials.front();
+            }
+            result.meshes.push_back({mesh, mat});
         }
-        else {
-            mat = uniqueMaterials.front();
-        }
-        result.meshes.push_back({mesh, mat});
     }
+
     result.instanceData = data->instanceDatas;
 
     d_models[filePath] = result;
@@ -352,6 +408,8 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
 std::vector<rnd::MeshBatch>
 AssetManager::buildMeshBatches(const LoadedModel& model)
 {
+    ENG_PROFILE_SCOPE("Load Batches");
+
     std::vector<std::vector<glm::mat4> > placements(model.meshes.size());
 
     for (const InstanceData& instance : model.instanceData) {

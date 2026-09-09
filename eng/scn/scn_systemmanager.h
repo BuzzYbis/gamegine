@@ -16,6 +16,9 @@
 #include <memory>
 #include <vector>
 
+// core
+#include <core/core_profiler.h>
+
 // scene
 #include <scn/sys/sys_isystem.h>
 
@@ -38,6 +41,11 @@ class SystemManager {
 
     /// List of all systems registered in the scene.
     std::vector<std::unique_ptr<sys::ISystem> > d_systems;
+
+    /// Profiling scope of each system, parallel to 'd_systems'. Resolving
+    /// the scope once at registration keeps the update loop free of any
+    /// name lookup.
+    std::vector<core::ScopeId> d_scopeIds;
 
   public:
     // MANIPULATORS

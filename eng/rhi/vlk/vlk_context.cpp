@@ -201,6 +201,15 @@ bool Context::initialize(const bool enableValidation)
     return true;
 }
 
+std::string Context::deviceName() const
+{
+    if (!*d_physicalDevice) {
+        return "unknown";
+    }
+
+    return d_physicalDevice.getProperties().deviceName;
+}
+
 void Context::waitIdle()
 {
     d_device.waitIdle();

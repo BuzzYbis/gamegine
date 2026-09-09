@@ -15,6 +15,7 @@
 
 // std
 #include <memory>
+#include <string>
 
 namespace eng::rhi {
 
@@ -56,6 +57,14 @@ class ContextProtocol {
     /// Block the calling thread until the GPU has finished executing all
     /// submitted commands.
     virtual void waitIdle() = 0;
+
+    // ACCESSORS
+
+    /// Return the name of the physical device this context runs on.
+    [[nodiscard]]
+    virtual std::string deviceName() const = 0;
+
+    // MANIPULATORS
 
     /// Create and return a newly allocated swapchain configured with the
     /// specified 'width' and 'height'.

@@ -7,6 +7,7 @@
 // core
 #include <core/core_instance.h>
 #include <core/core_log.h>
+#include <core/core_profiler.h>
 #include <core/core_vertex.h>
 
 // renderer
@@ -165,6 +166,10 @@ void Renderer::drawMeshes(rhi::CommandListProtocol* cmd,
         scene.registry()
             .view<scn::comp::TransformComponent, scn::comp::MeshComponent>();
 
+    int64_t drawCalls = 0;
+    int64_t instances = 0;
+    int64_t indices   = 0;
+
     for (const auto entity : group) {
         auto [transform, meshComp] =
             group.get<scn::comp::TransformComponent, scn::comp::MeshComponent>(
@@ -218,10 +223,21 @@ void Renderer::drawMeshes(rhi::CommandListProtocol* cmd,
                                &constants);
 
             // 5. Draw
-            batch.mesh->draw(cmd,
-                             static_cast<uint32_t>(batch.instances.size()));
+            const auto instanceCount = static_cast<uint32_t>(
+                batch.instances.size());
+
+            batch.mesh->draw(cmd, instanceCount);
+
+            ++drawCalls;
+            instances += instanceCount;
+            indices += static_cast<int64_t>(batch.mesh->getIndexCount()) *
+                       instanceCount;
         }
     }
+
+    ENG_PROFILE_COUNTER("Draw Calls", drawCalls);
+    ENG_PROFILE_COUNTER("Instances", instances);
+    ENG_PROFILE_COUNTER("Triangles", indices / 3);
 }
 
 void Renderer::updateUniformBuffer(scn::Scene& scene) const

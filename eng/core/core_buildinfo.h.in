@@ -1,0 +1,38 @@
+// core_buildinfo.h                                                   -*-C++-*-
+#ifndef INCLUDED_ENG_CORE_BUILDINFO_H
+#define INCLUDED_ENG_CORE_BUILDINFO_H
+
+//@PURPOSE: Provide the identity of the build currently running.
+//
+//@DESCRIPTION: This header is GENERATED at build time from
+// 'core_buildinfo.h.in' by 'cmake/git_info.cmake'. Do not edit it: edit the
+// template instead.
+//
+// The constants below identify the build precisely enough for a measurement
+// taken by it to be attributed later on. 'k_GIT_DIRTY' tells whether tracked
+// files differed from the commit, which is what disqualifies a measurement
+// from being compared with the others.
+
+namespace eng::core {
+
+/// Version of the project, as declared to CMake.
+inline constexpr const char* k_VERSION = "@ENG_VERSION@";
+
+/// Commit the binary was built from.
+inline constexpr const char* k_GIT_COMMIT = "@ENG_GIT_COMMIT@";
+
+/// Branch the binary was built from.
+inline constexpr const char* k_GIT_BRANCH = "@ENG_GIT_BRANCH@";
+
+/// Whether tracked files differed from the commit at build time.
+inline constexpr bool k_GIT_DIRTY = @ENG_GIT_DIRTY@;
+
+/// Build configuration, as chosen by CMake.
+inline constexpr const char* k_BUILD_TYPE = "@ENG_BUILD_TYPE@";
+
+/// Compiler the binary was built with.
+inline constexpr const char* k_COMPILER = "@ENG_COMPILER@";
+
+}  // close package namespace
+
+#endif  // INCLUDED_ENG_CORE_BUILDINFO_H

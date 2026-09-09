@@ -36,6 +36,17 @@ class ISystem {
     /// Update the system.
     virtual void
     update(entt::registry& registry, core::InputManager& input, float dt) = 0;
+
+    // ACCESSORS
+
+    /// Return the name under which this system is profiled. Systems sharing
+    /// a name share a single profiling scope, and hence report the sum of
+    /// their durations.
+    [[nodiscard]]
+    virtual const char* name() const
+    {
+        return "Unnamed System";
+    }
 };
 
 }  // close package namespace
