@@ -45,11 +45,17 @@ void Engine::initialize(const char* title, const int width, const int height)
 
     // Setup binding keys
     d_inputManager->bindKey(GLFW_KEY_W, InputAction::MOVE_FORWARD);
+    d_inputManager->bindKey(GLFW_KEY_UP, InputAction::MOVE_FORWARD);
     d_inputManager->bindKey(GLFW_KEY_S, InputAction::MOVE_BACKWARD);
+    d_inputManager->bindKey(GLFW_KEY_DOWN, InputAction::MOVE_BACKWARD);
     d_inputManager->bindKey(GLFW_KEY_A, InputAction::MOVE_LEFT);
+    d_inputManager->bindKey(GLFW_KEY_LEFT, InputAction::MOVE_LEFT);
     d_inputManager->bindKey(GLFW_KEY_D, InputAction::MOVE_RIGHT);
+    d_inputManager->bindKey(GLFW_KEY_RIGHT, InputAction::MOVE_RIGHT);
     d_inputManager->bindKey(GLFW_KEY_Z, InputAction::MOVE_UP);
+    d_inputManager->bindKey(GLFW_KEY_PAGE_UP, InputAction::MOVE_UP);
     d_inputManager->bindKey(GLFW_KEY_X, InputAction::MOVE_DOWN);
+    d_inputManager->bindKey(GLFW_KEY_PAGE_DOWN, InputAction::MOVE_DOWN);
     d_inputManager->bindKey(GLFW_MOUSE_BUTTON_RIGHT, InputAction::RIGHT_CLICK);
 
     d_uiManager = std::make_unique<ui::UIManager>();
@@ -57,6 +63,8 @@ void Engine::initialize(const char* title, const int width, const int height)
                             d_renderer->swapchain(),
                             *d_window,
                             api);
+
+    d_lastFps = 0;
 }
 
 void Engine::run()
@@ -66,6 +74,14 @@ void Engine::run()
     while (!d_window->shouldClose()) {
         d_timer.tick();
         const float dt = d_timer.releaseDeltaTime();
+
+        if (const uint32_t fps = d_timer.fps(); fps != d_lastFps) {
+            d_lastFps = fps;
+            d_window->setWindowTitle(std::format("{} - {} FPS ({:.2f} ms)",
+                                                 "Gamegine",
+                                                 fps,
+                                                 d_timer.avgMs()));
+        }
 
         d_window->pollEvents();
         d_inputManager->update(d_window.get(), dt);

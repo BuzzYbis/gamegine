@@ -18,6 +18,7 @@
 
 // rhi
 #include <rhi/rhi_contextprotocol.h>
+#include <rhi/rhi_types.h>
 
 // vulkan
 #include <vulkan/vulkan_raii.hpp>
@@ -79,6 +80,10 @@ class Context : public ContextProtocol {
     /// The descriptor pool for the graphics queue.
     vk::raii::DescriptorPool d_descriptorPool;
 
+    /// The optional capabilities reported by 'd_physicalDevice'. Populated
+    /// by 'queryCapabilities' during 'initialize'.
+    DeviceCapabilities d_capabilities;
+
     // PRIVATE MANIPULATORS
 
     /// Initialize the Vulkan library, load required extensions (including
@@ -104,12 +109,24 @@ class Context : public ContextProtocol {
     /// Return 'true' on success.
     bool createLogicalDevice();
 
+    /// Populate 'd_capabilities' from the selected physical device and emit
+    /// a summary to the log. This function reports only: it never rejects a
+    /// device, and the extensions it inspects are deliberately absent from
+    /// the required extension list. The behavior is undefined unless
+    /// 'pickPhysicalDevice' has returned 'true'.
+    void queryCapabilities();
+
     // PRIVATE ACCESSORS
 
     /// Return the maximum MSAA sample count supported by both the Color
     /// and Depth attachments of the physical device.
     [[nodiscard]]
     vk::SampleCountFlagBits findMaxUsableSampleCount() const;
+
+    /// Emit a summary of 'd_capabilities' to the log, followed by a warning
+    /// for each capability whose absence changes which rendering paths are
+    /// available.
+    void logCapabilities() const;
 
   public:
     // CREATORS
@@ -215,6 +232,11 @@ class Context : public ContextProtocol {
     /// Return a const reference to the descriptor pool.
     [[nodiscard]]
     const vk::raii::DescriptorPool& descriptorPool() const;
+
+    /// Return a const reference to the optional capabilities reported by the
+    /// selected physical device.
+    [[nodiscard]]
+    const DeviceCapabilities& capabilities() const override;
 };
 
 // =======================================================================
@@ -256,6 +278,11 @@ inline uint32_t Context::graphicsQueueFamilyIndex() const
 inline core::Window* Context::window() const
 {
     return d_window_p;
+}
+
+inline const DeviceCapabilities& Context::capabilities() const
+{
+    return d_capabilities;
 }
 
 inline const vk::raii::SurfaceKHR& Context::surface() const

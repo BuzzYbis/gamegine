@@ -8,6 +8,7 @@
 //  eng::rhi::GraphicsAPI: Enumeration of supported graphics backends.
 //  eng::rhi::Format: Enumeration of pixel and vertex formats.
 //  eng::rhi::VertexBindingDescriptor: Memory layout for vertex buffers.
+//  eng::rhi::DeviceCapabilities: Optional GPU features reported by a device.
 //  eng::rhi::MeshPushConstants: Per-object data sent to shaders.
 //
 //@DESCRIPTION: This component provides a centralized set of technical types,
@@ -16,6 +17,8 @@
 // renderer and the various API-specific backends.
 
 // std
+#include <cstdint>
+#include <string>
 #include <vector>
 
 // third-party
@@ -110,9 +113,139 @@ struct ResourceLayoutConfig {
     std::vector<ResourceBinding> bindings;
 };
 
+// ========================
+// struct DeviceCapabilities
+// ========================
+
+/// This struct reports the optional GPU capabilities that higher layers may
+/// branch on when selecting a rendering path. It is populated once during
+/// 'ContextProtocol::initialize' and is immutable thereafter. It deliberately
+/// holds no backend-specific types, so a renderer can pick a path without
+/// including any graphics API header.
+struct DeviceCapabilities {
+    // DATA
+
+    // -- Identity
+
+    /// Human-readable name of the selected physical device.
+    std::string deviceName;
+
+    /// Human-readable driver name and version.
+    std::string driverInfo;
+
+    /// Major component of the supported API version.
+    uint32_t apiVersionMajor = 0;
+
+    /// Minor component of the supported API version.
+    uint32_t apiVersionMinor = 0;
+
+    // -- Bindless resources and GPU-driven submission
+
+    /// 'true' if shaders can dereference raw device pointers into buffers.
+    bool bufferDeviceAddress = false;
+
+    /// 'true' if descriptors can be indexed by a shader-computed value.
+    bool descriptorIndexing = false;
+
+    /// 'true' if descriptor arrays may be declared without a fixed size.
+    bool runtimeDescriptorArray = false;
+
+    /// 'true' if sampled image arrays accept non-uniform indices.
+    bool nonUniformImageIndexing = false;
+
+    /// 'true' if a descriptor binding may be left partially populated.
+    bool partiallyBoundDescriptors = false;
+
+    /// 'true' if many draws may be sourced from a single buffer.
+    bool multiDrawIndirect = false;
+
+    /// 'true' if the draw count itself may be read from a GPU buffer. When
+    /// this is 'false' but 'multiDrawIndirect' is 'true', a GPU-driven
+    /// pipeline must dispatch a fixed maximum count and zero the instance
+    /// count of culled entries instead of removing them.
+    bool drawIndirectCount = false;
+
+    /// 'true' if draw parameters such as 'gl_DrawID' are visible to shaders.
+    bool shaderDrawParameters = false;
+
+    // -- 64-bit integer support
+
+    /// 'true' if shaders may perform 64-bit integer arithmetic.
+    bool shaderInt64 = false;
+
+    /// 'true' if 64-bit atomic operations on buffers are supported.
+    bool bufferInt64Atomics = false;
+
+    /// 'true' if 64-bit atomic operations on images are supported. A
+    /// software rasterizer needs this to resolve depth and primitive
+    /// identity in a single atomic maximum.
+    bool imageInt64Atomics = false;
+
+    // -- Optional geometry pipeline
+
+    /// 'true' if the mesh shader stage is available.
+    bool meshShader = false;
+
+    /// 'true' if the task (amplification) shader stage is available.
+    bool taskShader = false;
+
+    // -- Properties
+
+    /// Number of invocations that execute in lockstep, or 0 if unknown.
+    uint32_t subgroupSize = 0;
+
+    /// Smallest subgroup size the device can be asked to use.
+    uint32_t minSubgroupSize = 0;
+
+    /// Largest subgroup size the device can be asked to use.
+    uint32_t maxSubgroupSize = 0;
+
+    /// Maximum number of invocations in a single compute work group.
+    uint32_t maxComputeWorkGroupInvocations = 0;
+
+    /// Maximum number of sampled images addressable from one shader stage
+    /// through update-after-bind descriptors. This is the practical ceiling
+    /// on the size of a bindless material table.
+    uint32_t maxBindlessSampledImages = 0;
+
+    // ACCESSORS
+
+    /// Return 'true' if this device can drive draw submission from the GPU
+    /// without rebinding descriptors per object.
+    [[nodiscard]]
+    bool supportsGpuDrivenSubmission() const;
+
+    /// Return 'true' if this device can run the 64-bit variant of a software
+    /// rasterizer, which resolves depth and identity in one atomic maximum.
+    [[nodiscard]]
+    bool supports64BitVisibilityAtomics() const;
+};
+
 struct MeshPushConstants {
     glm::mat4 renderMatrix;  // Model matrix (offset 0 for shader)
 };
+
+// =======================================================================
+//                          INLINE DEFINITIONS
+// =======================================================================
+
+// ------------------------
+// struct DeviceCapabilities
+// ------------------------
+
+// ACCESSORS
+
+inline bool DeviceCapabilities::supportsGpuDrivenSubmission() const
+{
+    return bufferDeviceAddress && descriptorIndexing &&
+           runtimeDescriptorArray &&
+           (drawIndirectCount || multiDrawIndirect);
+}
+
+inline bool DeviceCapabilities::supports64BitVisibilityAtomics() const
+{
+    return shaderInt64 && imageInt64Atomics;
+}
 
 }  // close package namespace
 #endif  // INCLUDED_ENG_RHI_TYPES_H

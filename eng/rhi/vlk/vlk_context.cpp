@@ -168,6 +168,8 @@ bool Context::initialize(const bool enableValidation)
         return false;
     }
 
+    queryCapabilities();
+
     if (!findGraphicsQueueFamily()) {
         return false;
     }
@@ -395,6 +397,160 @@ bool Context::findGraphicsQueueFamily()
                  "Presentation!"
               << std::endl;
     return false;
+}
+
+void Context::queryCapabilities()
+{
+    // Extension availability is inspected here but never required: these
+    // extensions are deliberately absent from 'deviceExtensions', so a device
+    // that lacks them still passes selection. This function reports what the
+    // renderer may branch on; it never rejects a device.
+    const auto availableExtensions =
+        d_physicalDevice.enumerateDeviceExtensionProperties();
+
+    const auto hasExtension = [&availableExtensions](const char* name) {
+        return std::ranges::any_of(
+            availableExtensions,
+            [name](const vk::ExtensionProperties& prop) {
+                return strcmp(name, prop.extensionName) == 0;
+            });
+    };
+
+    // Core features. Chaining the 1.1 and 1.2 structures is always safe on a
+    // device that already passed the 1.3 API version check.
+    const auto features =
+        d_physicalDevice.getFeatures2<vk::PhysicalDeviceFeatures2,
+                                      vk::PhysicalDeviceVulkan11Features,
+                                      vk::PhysicalDeviceVulkan12Features>();
+
+    const auto& base = features.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& v11  = features.get<vk::PhysicalDeviceVulkan11Features>();
+    const auto& v12  = features.get<vk::PhysicalDeviceVulkan12Features>();
+
+    d_capabilities.bufferDeviceAddress = v12.bufferDeviceAddress == VK_TRUE;
+    d_capabilities.descriptorIndexing  = v12.descriptorIndexing == VK_TRUE;
+    d_capabilities.runtimeDescriptorArray =
+        v12.runtimeDescriptorArray == VK_TRUE;
+    d_capabilities.nonUniformImageIndexing =
+        v12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
+    d_capabilities.partiallyBoundDescriptors =
+        v12.descriptorBindingPartiallyBound == VK_TRUE;
+    d_capabilities.shaderDrawParameters = v11.shaderDrawParameters == VK_TRUE;
+    d_capabilities.multiDrawIndirect    = base.multiDrawIndirect == VK_TRUE;
+    d_capabilities.shaderInt64          = base.shaderInt64 == VK_TRUE;
+    d_capabilities.bufferInt64Atomics =
+        v12.shaderBufferInt64Atomics == VK_TRUE;
+
+    // A GPU-written draw count is reachable either as a promoted 1.2 feature
+    // or through the original extension.
+    d_capabilities.drawIndirectCount =
+        v12.drawIndirectCount == VK_TRUE ||
+        hasExtension(vk::KHRDrawIndirectCountExtensionName);
+
+    // Extension-gated features are queried in their own chains, so that no
+    // structure is submitted for an extension the device does not expose.
+    // The '#ifdef' guards keep this translation unit compiling against Vulkan
+    // headers that predate the extension, in which case the capability is
+    // simply reported as unsupported.
+#ifdef VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME
+    if (hasExtension(vk::EXTShaderImageAtomicInt64ExtensionName)) {
+        const auto chain = d_physicalDevice.getFeatures2<
+            vk::PhysicalDeviceFeatures2,
+            vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT>();
+
+        d_capabilities.imageInt64Atomics =
+            chain.get<vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT>()
+                .shaderImageInt64Atomics == VK_TRUE;
+    }
+#endif
+
+#ifdef VK_EXT_MESH_SHADER_EXTENSION_NAME
+    if (hasExtension(vk::EXTMeshShaderExtensionName)) {
+        const auto chain = d_physicalDevice.getFeatures2<
+            vk::PhysicalDeviceFeatures2,
+            vk::PhysicalDeviceMeshShaderFeaturesEXT>();
+
+        const auto& mesh =
+            chain.get<vk::PhysicalDeviceMeshShaderFeaturesEXT>();
+
+        d_capabilities.meshShader = mesh.meshShader == VK_TRUE;
+        d_capabilities.taskShader = mesh.taskShader == VK_TRUE;
+    }
+#endif
+
+    // Properties and limits.
+    const auto properties = d_physicalDevice.getProperties2<
+        vk::PhysicalDeviceProperties2,
+        vk::PhysicalDeviceVulkan11Properties,
+        vk::PhysicalDeviceVulkan12Properties,
+        vk::PhysicalDeviceVulkan13Properties>();
+
+    const auto& props =
+        properties.get<vk::PhysicalDeviceProperties2>().properties;
+    const auto& p11 =
+        properties.get<vk::PhysicalDeviceVulkan11Properties>();
+    const auto& p12 =
+        properties.get<vk::PhysicalDeviceVulkan12Properties>();
+    const auto& p13 =
+        properties.get<vk::PhysicalDeviceVulkan13Properties>();
+
+    d_capabilities.deviceName = props.deviceName.data();
+    d_capabilities.driverInfo = std::string(p12.driverName.data()) + " " +
+                                p12.driverInfo.data();
+
+    d_capabilities.apiVersionMajor = VK_API_VERSION_MAJOR(props.apiVersion);
+    d_capabilities.apiVersionMinor = VK_API_VERSION_MINOR(props.apiVersion);
+    d_capabilities.subgroupSize    = p11.subgroupSize;
+    d_capabilities.minSubgroupSize = p13.minSubgroupSize;
+    d_capabilities.maxSubgroupSize = p13.maxSubgroupSize;
+    d_capabilities.maxComputeWorkGroupInvocations =
+        props.limits.maxComputeWorkGroupInvocations;
+    d_capabilities.maxBindlessSampledImages =
+        p12.maxPerStageDescriptorUpdateAfterBindSampledImages;
+
+    logCapabilities();
+}
+
+void Context::logCapabilities() const
+{
+    const auto yn = [](const bool value) { return value ? "yes" : "no"; };
+    const auto& c = d_capabilities;
+
+    LOG_INFO("Device: ", c.deviceName, " (", c.driverInfo, ", Vulkan ",
+             c.apiVersionMajor, ".", c.apiVersionMinor, ")");
+    LOG_INFO("  bufferDeviceAddress=", yn(c.bufferDeviceAddress),
+             " descriptorIndexing=", yn(c.descriptorIndexing),
+             " runtimeDescriptorArray=", yn(c.runtimeDescriptorArray),
+             " nonUniformImageIndexing=", yn(c.nonUniformImageIndexing));
+    LOG_INFO("  multiDrawIndirect=", yn(c.multiDrawIndirect),
+             " drawIndirectCount=", yn(c.drawIndirectCount),
+             " shaderDrawParameters=", yn(c.shaderDrawParameters));
+    LOG_INFO("  shaderInt64=", yn(c.shaderInt64),
+             " bufferInt64Atomics=", yn(c.bufferInt64Atomics),
+             " imageInt64Atomics=", yn(c.imageInt64Atomics));
+    LOG_INFO("  meshShader=", yn(c.meshShader),
+             " taskShader=", yn(c.taskShader),
+             " subgroupSize=", c.subgroupSize,
+             " (", c.minSubgroupSize, "-", c.maxSubgroupSize, ")");
+    LOG_INFO("  maxComputeWorkGroupInvocations=",
+             c.maxComputeWorkGroupInvocations,
+             " maxBindlessSampledImages=", c.maxBindlessSampledImages);
+
+    if (!c.supportsGpuDrivenSubmission()) {
+        LOG_WARN("Device cannot drive draw submission from the GPU: "
+                 "bindless indirect rendering is unavailable.");
+    }
+    else if (!c.drawIndirectCount) {
+        LOG_WARN("No GPU-written draw count: indirect passes must dispatch "
+                 "a fixed maximum and zero the instance count of culled "
+                 "entries.");
+    }
+
+    if (!c.supports64BitVisibilityAtomics()) {
+        LOG_WARN("No 64-bit image atomics: a software rasterizer must pack "
+                 "depth and identity into 32 bits and resolve in a second "
+                 "pass.");
+    }
 }
 
 bool Context::createLogicalDevice()

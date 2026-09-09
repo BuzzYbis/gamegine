@@ -58,6 +58,7 @@ class Engine {
     std::unique_ptr<scn::Scene>           d_scene;
     std::unique_ptr<scn::SystemManager>   d_systemManager;
     StepTimer                             d_timer;
+    u_int32_t                             d_lastFps;
 
     // PRIVATE MANIPULATORS
 

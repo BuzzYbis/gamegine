@@ -27,6 +27,7 @@ class ResourceSetProtocol;
 class SwapchainProtocol;
 class TextureProtocol;
 
+struct DeviceCapabilities;
 struct PipelineConfig;
 struct ResourceLayoutConfig;
 
@@ -93,6 +94,14 @@ class ContextProtocol {
     /// specified 'layout'. The behavior is undefined if 'layout' is null.
     virtual std::unique_ptr<ResourceSetProtocol>
     createResourceSet(ResourceLayoutProtocol* layout) = 0;
+
+    // ACCESSORS
+
+    /// Return a const reference to the optional capabilities reported by the
+    /// device backing this context. The behavior is undefined unless
+    /// 'initialize' has returned 'true'.
+    [[nodiscard]]
+    virtual const DeviceCapabilities& capabilities() const = 0;
 };
 
 }  // close package namespace
