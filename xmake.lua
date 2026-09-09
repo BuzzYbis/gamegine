@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright (c) 2026 BuzzY_ & Rether
 -- =============================================================================
 -- Gamegine 
 -- Build Configuration
@@ -127,18 +129,18 @@ add_requires("benchmark")
 
 
 -- =============================================================================
--- Target: Engine (Static Library)
+-- Target: Gamegine (Static Library)
 
-target("engine")
+target("gamegine")
     set_kind("static")
     add_rules("gamegine.warnings", "gamegine.werror")
 
     -- Include directories & headers
-    add_includedirs("include", {public = true})
-    add_headerfiles("include/(engine/**.h)")
+    add_includedirs("gamegine/include", {public = true})
+    add_headerfiles("gamegine/include/(engine/**.h)")
 
     -- Source files
-    add_files("src/**.cpp")
+    add_files("gamegine/src/**.cpp")
 
     -- Dependencies
     add_packages("vulkansdk", "fastgltf", {public = true})
@@ -164,7 +166,7 @@ target("tests")
     add_rules("gamegine.warnings")
 
     -- Engine dependency
-    add_deps("engine")
+    add_deps("gamegine")
 
     -- Test sources
     add_files("tests/**.cpp")
@@ -185,7 +187,7 @@ target("benchmarks")
     add_rules("gamegine.warnings", "gamegine.werror")
 
     -- Engine dependency
-    add_deps("engine")
+    add_deps("gamegine")
 
     -- Benchmark sources
     add_files("benchmarks/**.cpp")
