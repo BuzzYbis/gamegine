@@ -34,10 +34,10 @@ namespace eng::rnd {
 class Mesh {
   private:
     // DATA
-    std::unique_ptr<rhi::BufferProtocol> m_vertexBuffer;
-    std::unique_ptr<rhi::BufferProtocol> m_indexBuffer;
+    std::unique_ptr<rhi::BufferProtocol> d_vertexBuffer;
+    std::unique_ptr<rhi::BufferProtocol> d_indexBuffer;
 
-    uint32_t m_indexCount = 0;
+    uint32_t d_indexCount = 0;
 
   public:
     // CREATORS
@@ -57,14 +57,14 @@ class Mesh {
     [[nodiscard]]
     uint32_t getIndexCount() const
     {
-        return m_indexCount;
+        return d_indexCount;
     }
 
     // MANIPULATORS
 
     /// Record the commands necessary to bind and draw this mesh into the
     /// specified 'cmd' command list.
-    void draw(rhi::CommandListProtocol* cmd) const;
+    void draw(rhi::CommandListProtocol* cmd, uint32_t instanceCount = 1) const;
 };
 
 }  // close package namespace

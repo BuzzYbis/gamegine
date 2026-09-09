@@ -43,6 +43,7 @@ target_sources(eng PRIVATE
         core/core_log.cpp
         core/core_log.h
         core/core_vertex.h
+        core/core_instance.h
 )
 
 # 3. Renderer & RHI (Vulkan)
@@ -51,6 +52,7 @@ target_sources(eng PRIVATE
         rnd/renderer.h
         rnd/mesh.cpp
         rnd/mesh.h
+        rnd/meshbatch.h
         rnd/texture.cpp
         rnd/texture.h
         rnd/material.cpp
@@ -119,8 +121,6 @@ target_sources(eng PRIVATE
         asset/asset_manager.cpp
         asset/asset_manager.h
         asset/asset_modeldata.h
-        asset/impt/impt_obj.cpp
-        asset/impt/impt_obj.h
         asset/impt/impt_gltf.cpp
         asset/impt/impt_gltf.h
         asset/impt/impt_model.h

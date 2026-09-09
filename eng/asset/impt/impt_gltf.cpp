@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -28,7 +29,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <iostream>
 #include <ktx.h>
 #include <tiny_gltf.h>
 
@@ -93,7 +93,8 @@ glm::mat4 computeLocalTransform(const tinygltf::Node& node)
 /// unless 'accessorIndex' designates an accessor backed by a valid buffer
 /// view. The behavior is undefined unless 'model' outlives the returned
 /// view.
-AccessorView makeAccessorView(const tinygltf::Model& model, int accessorIndex)
+AccessorView makeAccessorView(const tinygltf::Model& model,
+                              const int              accessorIndex)
 {
     if (accessorIndex < 0 ||
         accessorIndex >= static_cast<int>(model.accessors.size())) {
@@ -131,8 +132,7 @@ AccessorView makeAccessorView(const tinygltf::Model& model, int accessorIndex)
 /// Throw 'std::runtime_error' if 'primitive' has no position attribute or if
 /// one of its attributes cannot be read.
 std::vector<core::Vertex> readVertices(const tinygltf::Model&     model,
-                                       const tinygltf::Primitive& primitive,
-                                       const glm::mat4& worldTransform)
+                                       const tinygltf::Primitive& primitive)
 {
     const auto& attributes = primitive.attributes;
     const auto  posIt      = attributes.find("POSITION");
@@ -158,33 +158,26 @@ std::vector<core::Vertex> readVertices(const tinygltf::Model&     model,
 
     std::vector<core::Vertex> vertices(posView.d_count);
 
-    // Normals are covectors: transforming them with 'worldTransform' would
-    // break their orthogonality to the surface under non-uniform scaling,
-    // hence the inverse transpose.
-    const glm::mat3 normalMatrix = glm::inverseTranspose(
-        glm::mat3(worldTransform));
-
     for (std::size_t i = 0; i < posView.d_count; ++i) {
         core::Vertex&        vertex = vertices[i];
         const unsigned char* posPtr = posView.d_data_p + i * posView.d_stride;
         const float*         pos    = reinterpret_cast<const float*>(posPtr);
 
-        vertex.position = glm::vec3(worldTransform *
-                                    glm::vec4(pos[0], pos[1], pos[2], 1.0f));
+        vertex.position = glm::vec3(pos[0], pos[1], pos[2]);
 
         if (normView.has_value()) {
             const unsigned char* normPtr = normView->d_data_p +
                                            i * normView->d_stride;
             const float* norm = reinterpret_cast<const float*>(normPtr);
             vertex.normal     = glm::normalize(
-                normalMatrix * glm::vec3(norm[0], norm[1], norm[2]));
+                glm::vec3(norm[0], norm[1], norm[2]));
         }
 
         if (uvView.has_value()) {
             const unsigned char* uvPtr = uvView->d_data_p +
                                          i * uvView->d_stride;
-            const float* uv = reinterpret_cast<const float*>(uvPtr);
-            vertex.uv       = {uv[0], uv[1]};
+            const float*         uv    = reinterpret_cast<const float*>(uvPtr);
+            vertex.uv                  = {uv[0], 1.0F - uv[1]};
         }
     }
 
@@ -391,6 +384,35 @@ void applyTransmission(const tinygltf::Material& material,
     }
 }
 
+std::vector<MeshData>
+readMeshes(const tinygltf::Model&               model,
+           std::vector<std::vector<uint32_t> >& primitiveMeshMap)
+{
+    std::vector<MeshData> meshes;
+
+    for (size_t m = 0; m < model.meshes.size(); ++m) {
+        const auto& meshe = model.meshes[m];
+        primitiveMeshMap[m].reserve(meshe.primitives.size());
+        for (size_t p = 0; p < meshe.primitives.size(); ++p) {
+            MeshData    meshData;
+            const auto& primitive = meshe.primitives[p];
+
+            meshData.vertices = readVertices(model, primitive);
+
+            if (primitive.indices > -1) {
+                meshData.indices = readIndices(model, primitive);
+            }
+
+            uint32_t meshIndex     = static_cast<uint32_t>(meshes.size());
+            meshData.materialIndex = primitive.material;
+            primitiveMeshMap[m][p] = meshIndex;
+            meshes.emplace_back(meshData);
+        }
+    }
+
+    return meshes;
+}
+
 /// Return the materials of the specified 'model', in that same order, each
 /// carrying the factors of the metallic-roughness model and referring to its
 /// images by index. A property left undeclared by 'model' keeps the default
@@ -445,55 +467,17 @@ std::vector<MaterialData> readMaterials(const tinygltf::Model& model)
     return materials;
 }
 
-/// Return the index of the material used by the specified 'primitive' of the
-/// specified 'model', or -1 if 'primitive' designates no valid material. The
-/// returned index refers to the collection produced by 'readMaterials'.
-int readMaterialIndex(const tinygltf::Model&     model,
-                      const tinygltf::Primitive& primitive)
-{
-    if (primitive.material < 0 ||
-        primitive.material >= static_cast<int>(model.materials.size())) {
-        return -1;
-    }
-
-    return primitive.material;
-}
-
-/// Append to the specified 'modelData' the mesh built from the specified
-/// 'primitive' of the specified 'model', with its positions transformed by
-/// the specified 'worldTransform'. Throw 'std::runtime_error' if 'primitive'
-/// cannot be read.
-void processPrimitive(const tinygltf::Model&     model,
-                      const tinygltf::Primitive& primitive,
-                      const glm::mat4&           worldTransform,
-                      ModelData&                 modelData)
-{
-    std::vector<core::Vertex> vertices = {};
-    std::vector<uint32_t>     indices  = {};
-
-    vertices = readVertices(model, primitive, worldTransform);
-
-    if (primitive.indices > -1) {
-        indices = readIndices(model, primitive);
-    }
-
-    const auto materialIndex = readMaterialIndex(model, primitive);
-
-    modelData.meshes.emplace_back(std::move(vertices),
-                                  std::move(indices),
-                                  materialIndex);
-}
-
 /// Append to the specified 'modelData' the meshes of the node at the
 /// specified 'nodeIndex' in the specified 'model' and those of all its
 /// descendants, each transformed by the specified 'parentTransform' combined
 /// with the local transform of the node. Throw 'std::runtime_error' if
 /// 'nodeIndex', or any index reachable from it, does not designate a valid
 /// element of 'model'.
-void processNode(const tinygltf::Model& model,
-                 int                    nodeIndex,
-                 const glm::mat4&       parentTransform,
-                 ModelData&             modelData)
+void processNode(const tinygltf::Model&               model,
+                 int                                  nodeIndex,
+                 const glm::mat4&                     parentTransform,
+                 ModelData&                           modelData,
+                 std::vector<std::vector<uint32_t> >& primitiveMeshMap)
 {
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size())) {
         throw std::runtime_error("glTF node index is out of range");
@@ -509,22 +493,31 @@ void processNode(const tinygltf::Model& model,
         }
 
         const tinygltf::Mesh& mesh = model.meshes[node.mesh];
-        for (const auto& primitive : mesh.primitives) {
-            processPrimitive(model, primitive, worldTransform, modelData);
+
+        for (size_t p = 0; p < mesh.primitives.size(); ++p) {
+            InstanceData instance{};
+            instance.meshDataIndex  = primitiveMeshMap[node.mesh][p];
+            instance.materialIndex  = mesh.primitives[p].material;
+            instance.worldTransform = worldTransform;
+            modelData.instanceDatas.push_back(instance);
         }
     }
 
     // Recurse on children
     for (const int childIndex : node.children) {
-        processNode(model, childIndex, worldTransform, modelData);
+        processNode(model,
+                    childIndex,
+                    worldTransform,
+                    modelData,
+                    primitiveMeshMap);
     }
 }
 
 }  // close unnamed namespace
 
-// ------------------
+// ==================
 // class GltfImporter
-// ------------------
+// ==================
 
 // MANIPULATORS
 std::shared_ptr<ModelData> GltfImporter::load(const std::string& filepath)
@@ -569,15 +562,21 @@ std::shared_ptr<ModelData> GltfImporter::load(const std::string& filepath)
 
     std::shared_ptr<ModelData> modelData = std::make_shared<ModelData>();
 
-    modelData->images    = readImages(model, path);
+    std::vector<std::vector<uint32_t> > primitiveMeshMap(model.meshes.size());
+    modelData->meshes    = readMeshes(model, primitiveMeshMap);
     modelData->materials = readMaterials(model);
+    modelData->images    = readImages(model, path);
 
     constexpr glm::mat4    rootTransform = glm::mat4(1.0f);
     const tinygltf::Scene& scene         = model.scenes[sceneIndex];
 
     try {
         for (const int nodeIndex : scene.nodes) {
-            processNode(model, nodeIndex, rootTransform, *modelData);
+            processNode(model,
+                        nodeIndex,
+                        rootTransform,
+                        *modelData,
+                        primitiveMeshMap);
         }
     }
     catch (const std::exception& exception) {

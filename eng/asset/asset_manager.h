@@ -15,13 +15,18 @@
 // material and mesh creation.
 
 // std
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
+// asset
+#include <asset/asset_modeldata.h>
+
 // renderer
 #include <rnd/material.h>
 #include <rnd/mesh.h>
+#include <rnd/meshbatch.h>
 #include <rnd/renderer.h>
 #include <rnd/texture.h>
 
@@ -36,16 +41,22 @@ namespace eng::asset {
 // Forward declarations
 struct ImageData;
 
+struct MeshEntry {
+    std::shared_ptr<rnd::Mesh> mesh;
+    rnd::Material*             material = nullptr;
+};
+
 /// This structure stores the set of meshes and materials imported from a
 /// single model file.
 struct LoadedModel {
-    std::vector<std::shared_ptr<rnd::Mesh> > meshes;
-    std::vector<rnd::Material*>              materials;
+    std::vector<MeshEntry>      meshes;
+    std::vector<rnd::Material*> materials;
+    std::vector<InstanceData>   instanceData;
 };
 
-// ============
+// ==================
 // class AssetManager
-// ============
+// ==================
 
 /// This class is responsible for loading, caching, and managing the lifetime
 /// of textures, meshes, and materials.
@@ -104,6 +115,12 @@ class AssetManager {
     /// Load and return the model data from the specified 'filePath'.
     /// Return the cached model if it was already loaded.
     LoadedModel loadMesh(const std::string& filePath);
+
+    /// Return the batches drawing the specified 'model': one entry per mesh at
+    /// least one instance of 'model' names, holding the transform of every
+    /// such instance in import order. A mesh no instance names yields no
+    /// batch, and an instance naming no mesh of 'model' is skipped.
+    std::vector<rnd::MeshBatch> buildMeshBatches(const LoadedModel& model);
 };
 
 }  // close package namespace

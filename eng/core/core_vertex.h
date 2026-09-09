@@ -12,6 +12,13 @@
 // 3D position, normal, and UV coordinates. It also provides a utility method
 // to automatically populate RHI pipeline configurations with the correct
 // vertex memory layout.
+//
+// The buffer slot this structure is bound to, and the number of attribute
+// locations it claims, are published as 'k_BINDING' and 'k_LOCATION_COUNT'.
+// Per-instance data laid alongside it, 'eng::core::Instance' among it, has
+// to begin past both, and reads them rather than restating the numbers it
+// sees today. An attribute added here therefore moves what follows instead
+// of quietly landing on top of it.
 
 // std
 #include <cstddef>
@@ -33,6 +40,15 @@ namespace eng::core {
 
 /// This structure represents the data for a single vertex in a 3D mesh.
 struct Vertex {
+    // CLASS DATA
+
+    /// The vertex buffer slot this structure is bound to.
+    static constexpr uint32_t k_BINDING = 0;
+
+    /// The number of attribute locations this structure claims, counted
+    /// from zero. Data of another rate begins past it.
+    static constexpr uint32_t k_LOCATION_COUNT = 3;
+
     // DATA
     glm::vec3 position;  // 3D coordinates.
     glm::vec3 normal;    // Surface normal vector.
@@ -45,16 +61,22 @@ struct Vertex {
     static void populatePipelineConfig(rhi::PipelineConfig& config)
     {
         config.vertexBindings.push_back(
-            {0, sizeof(Vertex), rhi::VertexInputRate::Vertex});
+            {k_BINDING, sizeof(Vertex), rhi::VertexInputRate::Vertex});
 
-        config.vertexAttributes.push_back(
-            {0, 0, rhi::VertexFormat::Float3, offsetof(Vertex, position)});
+        config.vertexAttributes.push_back({0,
+                                           k_BINDING,
+                                           rhi::VertexFormat::Float3,
+                                           offsetof(Vertex, position)});
 
-        config.vertexAttributes.push_back(
-            {1, 0, rhi::VertexFormat::Float3, offsetof(Vertex, normal)});
+        config.vertexAttributes.push_back({1,
+                                           k_BINDING,
+                                           rhi::VertexFormat::Float3,
+                                           offsetof(Vertex, normal)});
 
-        config.vertexAttributes.push_back(
-            {2, 0, rhi::VertexFormat::Float2, offsetof(Vertex, uv)});
+        config.vertexAttributes.push_back({2,
+                                           k_BINDING,
+                                           rhi::VertexFormat::Float2,
+                                           offsetof(Vertex, uv)});
     }
 
     // ACCESSORS

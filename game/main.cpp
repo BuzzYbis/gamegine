@@ -33,31 +33,29 @@ int main()
         auto& camera = cameraEntity.addComponent<comp::CameraComponent>();
         camera.aspectRatio = static_cast<float>(WINDOW_WIDTH) /
                              static_cast<float>(WINDOW_HEIGHT);
-        camera.farPlane = 1000.0F;
-        camera.fov      = 90;
+        camera.farPlane    = 1000.0F;
+        camera.fov         = 90;
 
         auto& cameraTransform =
             cameraEntity.getComponent<comp::TransformComponent>();
         cameraTransform.setPosition({0.0F, 0.0F, 0.0F});
         cameraTransform.setRotation({0.F, 0.0F, 0.0F});
 
-        const auto [meshes, materials] = engine->assetManager()->loadMesh(
+        const eng::asset::LoadedModel model = engine->assetManager()->loadMesh(
             //    "models/StainedGlassLamp/glTF-KTX-BasisU/StainedGlassLamp.gltf");
             //    "models/AnisotropyBarnLamp/glTF-KTX-BasisU/"
             //    "AnisotropyBarnLamp.gltf");
             //    "models/glTF/DamagedHelmet.gltf");
-            //"models/chest/chest.glb");
+            //    "models/chest/chest.glb");
             "models/bistro/bistro.gltf");
 
-        auto entity      = engine->createEntity("DamagedHelmet (gltf)");
-        auto& [meshCompMesh,
-               material] = entity.addComponent<comp::MeshComponent>();
-        meshCompMesh     = meshes;
-        material         = materials;
+        auto  entity     = engine->createEntity("DamagedHelmet (gltf)");
+        auto& meshComp   = entity.addComponent<comp::MeshComponent>();
+        meshComp.batches = engine->assetManager()->buildMeshBatches(model);
 
         auto& entityTransform =
             entity.getComponent<comp::TransformComponent>();
-        entityTransform.setScale({10.0F, 10.0F, 10.0F});
+        entityTransform.setScale({1.0F, 1.0F, 1.0F});
         entityTransform.setPosition({1.5F, -0.3F, 0.0F});
         entityTransform.setRotation(
             {glm::radians(0.0F), glm::radians(0.0F), glm::radians(0.0F)});

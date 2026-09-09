@@ -7,10 +7,12 @@
 #include <iostream>
 #include <string>
 
+// core
+#include <core/core_instance.h>
+
 // asset
 #include <asset/asset_modeldata.h>
 #include <asset/impt/impt_gltf.h>
-#include <asset/impt/impt_obj.h>
 
 namespace eng::asset {
 namespace {
@@ -237,10 +239,7 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
 
     std::shared_ptr<impt::ModelImporter> importer;
 
-    if (extension == ".obj") {
-        importer = std::make_shared<impt::ObjImporter>();
-    }
-    else if (extension == ".gltf" || extension == ".glb") {
+    if (extension == ".gltf" || extension == ".glb") {
         importer = std::make_shared<impt::GltfImporter>();
     }
     else {
@@ -322,28 +321,73 @@ LoadedModel AssetManager::loadMesh(const std::string& filePath)
 
         uniqueMaterials.push_back(mat);
     }
+    result.materials = uniqueMaterials;
+    result.meshes.reserve(data->meshes.size());
 
     for (const auto& [vertices, indices, materialIndex] : data->meshes) {
-        auto mesh = std::make_shared<rnd::Mesh>(d_context_p,
-                                                vertices,
-                                                indices);
-        result.meshes.push_back(mesh);
+        const auto mesh = std::make_shared<rnd::Mesh>(d_context_p,
+                                                      vertices,
+                                                      indices);
 
-        int safeMatIndex = materialIndex;
+        rnd::Material* mat          = nullptr;
+        int            safeMatIndex = materialIndex;
         if (safeMatIndex < 0) {
             safeMatIndex = 0;
         }
 
         if (safeMatIndex < static_cast<int>(uniqueMaterials.size())) {
-            result.materials.push_back(uniqueMaterials[safeMatIndex]);
+            mat = uniqueMaterials[safeMatIndex];
         }
         else {
-            result.materials.push_back(uniqueMaterials.front());
+            mat = uniqueMaterials.front();
         }
+        result.meshes.push_back({mesh, mat});
     }
+    result.instanceData = data->instanceDatas;
 
     d_models[filePath] = result;
     return result;
+}
+
+std::vector<rnd::MeshBatch>
+AssetManager::buildMeshBatches(const LoadedModel& model)
+{
+    std::vector<std::vector<glm::mat4> > placements(model.meshes.size());
+
+    for (const InstanceData& instance : model.instanceData) {
+        if (instance.meshDataIndex >= model.meshes.size()) {
+            continue;
+        }
+
+        placements[instance.meshDataIndex].push_back(instance.worldTransform);
+    }
+
+    std::vector<rnd::MeshBatch> batches;
+    batches.reserve(model.meshes.size());
+
+    for (size_t i = 0; i < model.meshes.size(); ++i) {
+        if (placements[i].empty()) {
+            continue;
+        }
+
+        rnd::MeshBatch batch{};
+        batch.mesh      = model.meshes[i].mesh;
+        batch.material  = model.meshes[i].material;
+        batch.instances = std::move(placements[i]);
+
+        const size_t instanceSize = batch.instances.size() *
+                                    sizeof(core::Instance);
+
+        batch.instanceBuffer =
+            d_context_p->createBuffer(instanceSize, rhi::BufferUsage::Vertex);
+        batch.instanceBuffer->uploadData(batch.instances.data(),
+                                         instanceSize,
+                                         0);
+
+        batches.push_back(std::move(batch));
+    }
+
+    return batches;
 }
 
 }  // close package namespace

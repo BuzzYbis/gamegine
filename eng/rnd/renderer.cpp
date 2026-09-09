@@ -5,7 +5,9 @@
 #include <iostream>
 
 // core
+#include <core/core_instance.h>
 #include <core/core_log.h>
+#include <core/core_vertex.h>
 
 // renderer
 #include <rnd/material.h>
@@ -168,48 +170,56 @@ void Renderer::drawMeshes(rhi::CommandListProtocol* cmd,
             group.get<scn::comp::TransformComponent, scn::comp::MeshComponent>(
                 entity);
 
-        if (meshComp.d_meshes.empty() ||
-            meshComp.d_materials.size() != meshComp.d_meshes.size()) {
-            continue;
-        }
+        const glm::mat4 entityMatrix = transform.mat4();
 
-        rhi::MeshPushConstants constants{};
-        constants.renderMatrix = transform.mat4();
-
-        for (size_t i = 0; i < meshComp.d_meshes.size(); ++i) {
-            const auto&     meshPtr  = meshComp.d_meshes[i];
-            const Material* material = meshComp.d_materials[i];
-
-            // A mesh is drawn by the pass its own material belongs to, one
-            // entity being free to hold meshes of both kinds.
-            if ((material->alphaMode() == AlphaMode::Blend) != blended) {
+        for (const MeshBatch& batch : meshComp.batches) {
+            if (!batch.mesh || !batch.material) {
                 continue;
             }
 
+            // A mesh is drawn by the pass its own material belongs to, one
+            // entity being free to hold meshes of both kinds.
+            if ((batch.material->alphaMode() == AlphaMode::Blend) != blended) {
+                continue;
+            }
+
+            // Everything below holds for the whole batch, whose placements
+            // the device walks on its own, so nothing here is spent per
+            // placement and the batch leaves as a single draw.
+
             // 1. Pipeline
-            cmd->bindPipeline(material->pipeline());
+            cmd->bindPipeline(batch.material->pipeline());
 
             // 2. Global Resources (Camera) on Slot 0
-            cmd->bindResourceSet(material->pipeline(),
+            cmd->bindResourceSet(batch.material->pipeline(),
                                  0,
                                  d_globalResourceSet.get());
 
-            // 3. Transformation matrix
-            cmd->pushConstants(material->pipeline(),
+            // 3. Material Resources (Textures) on Slot 1
+            if (batch.material->resourceSet()) {
+                cmd->bindResourceSet(batch.material->pipeline(),
+                                     1,
+                                     batch.material->resourceSet());
+            }
+
+            cmd->bindVertexBuffer(batch.instanceBuffer.get(),
+                                  core::Instance::k_BINDING,
+                                  0);
+
+            // 4. Transformation matrix: the placement of the mesh inside
+            // its model, carried into the world by the entity.
+            rhi::MeshPushConstants constants{};
+            constants.renderMatrix = entityMatrix;
+
+            cmd->pushConstants(batch.material->pipeline(),
                                rhi::ShaderStage::Vertex,
                                0,
                                sizeof(rhi::MeshPushConstants),
                                &constants);
 
-            // 4. Material Resources (Textures) on Slot 1
-            if (material->resourceSet()) {
-                cmd->bindResourceSet(material->pipeline(),
-                                     1,
-                                     material->resourceSet());
-            }
-
             // 5. Draw
-            meshPtr->draw(cmd);
+            batch.mesh->draw(cmd,
+                             static_cast<uint32_t>(batch.instances.size()));
         }
     }
 }
@@ -261,6 +271,7 @@ void Renderer::createPipelines()
     config.pushConstantStage = rhi::ShaderStage::Vertex;
 
     core::Vertex::populatePipelineConfig(config);
+    core::Instance::populatePipelineConfig(config);
 
     // One pipeline per state a material can ask for. Blending composites the
     // fragment with the destination, which only makes sense without depth

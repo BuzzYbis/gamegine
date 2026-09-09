@@ -7,7 +7,9 @@
 //@CLASSES:
 //  eng::asset::AlphaMode: How the alpha of a material is interpreted.
 //  eng::asset::MaterialData: Raw material parameters from a file.
+//  eng::asset::ImageData: Raw image bytes or path parsed from a file.
 //  eng::asset::MeshData: Geometric data for a single mesh part.
+//  eng::asset::InstanceData: One placement of a mesh inside a model.
 //  eng::asset::ModelData: Collection of meshes and materials forming a model.
 //
 //@DESCRIPTION: This component provides Plain Old Data (POD) structures used
@@ -22,7 +24,10 @@
 // property.
 
 // std
+#include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // renderer
@@ -106,6 +111,17 @@ struct MeshData {
     int                       materialIndex = -1;
 };
 
+// ===================
+// struct InstanceData
+// ===================
+
+/// This structure stores one placement of one mesh inside a model.
+struct InstanceData {
+    uint32_t  meshDataIndex  = 0;
+    uint32_t  materialIndex  = 0;
+    glm::mat4 worldTransform = glm::mat4(1.0f);
+};
+
 // ================
 // struct ModelData
 // ================
@@ -114,6 +130,7 @@ struct MeshData {
 /// model file.
 struct ModelData {
     std::vector<MeshData>     meshes;
+    std::vector<InstanceData> instanceDatas;
     std::vector<MaterialData> materials;
     std::vector<ImageData>    images;
 };
