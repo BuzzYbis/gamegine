@@ -121,8 +121,9 @@ add_requires("vulkansdk")
 -- Fast glTF 2.0 parser (https://github.com/spnda/fastgltf)
 add_requires("fastgltf")
 
--- Google Test & Mock framework
-add_requires("googletest")
+-- Google Test & Mock framework (gmock is enabled by default;
+-- "main" links the gtest_main entry point used by 'xmake test')
+add_requires("gtest", {configs = {main = true}})
 
 -- Google Benchmark framework
 add_requires("benchmark")
@@ -150,6 +151,16 @@ target("gamegine")
     if is_plat("macosx") then
         add_frameworks("Metal", "Foundation", "QuartzCore", "Cocoa", "IOKit", "CoreVideo")
         add_defines("VK_USE_PLATFORM_METAL_EXT", {public = true})
+
+        -- The LunarG loader ships with '@rpath/libvulkan.1.dylib' as its install
+        -- name, so every executable linking it needs an rpath to the SDK, else
+        -- it builds fine but dies at load time with "Library not loaded".
+        local vulkan_sdk = os.getenv("VULKAN_SDK")
+        if vulkan_sdk then
+            add_rpathdirs(path.join(vulkan_sdk, "lib"), {public = true})
+        end
+        -- Default location used by the LunarG system-wide installer.
+        add_rpathdirs("/usr/local/lib", {public = true})
     -- 2. Linux (x86_64) using native NVIDIA GPU Vulkan driver
     elseif is_plat("linux") then
         add_syslinks("pthread", "dl", "m")
@@ -172,7 +183,7 @@ target("tests")
     add_files("tests/**.cpp")
 
     -- Google Test dependency
-    add_packages("googletest")
+    add_packages("gtest")
 
     -- Enable test discovery via 'xmake test'
     add_tests("unit")
@@ -215,3 +226,89 @@ target("imgui")
     if is_plat("macosx") then
         add_frameworks("Metal", "Cocoa")
     end
+
+
+-- =============================================================================
+-- Sample Assets (glTF scenes fetched on demand)
+--
+-- The sample scenes are too large for the repository, so they live on a public
+-- kDrive share and are downloaded once, on demand, into sample/models.
+--
+--   xmake build sample-models
+--
+-- Any target needing the assets can either add the rule directly or simply
+-- declare add_deps("sample-models").
+
+rule("gamegine.sample_models")
+    before_build(function (target)
+        import("lib.detect.find_tool")
+
+        -- Archives to fetch: <file name> = <direct download url>
+        local archives = {
+            ["bistro.zip"] = "https://kdrive.infomaniak.com/2/app/1926560/share/540dc381-0262-4a23-947b-7a5fc11790b3/files/11063/download"
+        }
+
+        local modelsdir = path.join(os.projectdir(), "sample", "models")
+        for archive, url in pairs(archives) do
+
+            -- The extracted scene lives in a directory named after the archive.
+            local outdir = path.join(modelsdir, path.basename(archive))
+            if os.isdir(outdir) then
+                goto continue
+            end
+
+            local curl = assert(find_tool("curl"), "curl not found, it is required to fetch %s", archive)
+            local unzip = assert(find_tool("unzip"), "unzip not found, it is required to extract %s", archive)
+
+            local zipfile = path.join(os.tmpdir(), archive)
+            local stagedir = os.tmpfile() .. ".unzip"
+            try
+            {
+                function ()
+                    cprint("${color.build.target}downloading %s ..", archive)
+                    os.vrunv(curl.program, {"-fL", "--progress-bar", "-o", zipfile, url})
+
+                    -- '__MACOSX' holds macOS resource forks, useless to the engine.
+                    cprint("${color.build.target}extracting %s -> %s", archive, outdir)
+                    os.vrunv(unzip.program, {"-q", "-o", zipfile, "-x", "__MACOSX/*", "-d", stagedir})
+
+                    -- Drop the archive's own root folder, if it has one, so the
+                    -- scene is never nested twice (sample/models/bistro/bistro).
+                    local dirs = os.dirs(path.join(stagedir, "*"))
+                    local files = os.files(path.join(stagedir, "*"))
+                    os.mkdir(modelsdir)
+                    if #dirs == 1 and #files == 0 then
+                        os.mv(dirs[1], outdir)
+                    else
+                        os.mv(stagedir, outdir)
+                    end
+                end,
+                catch
+                {
+                    function (errors)
+                        os.tryrm(outdir)
+                        raise("failed to fetch the sample model %s: %s", archive, errors)
+                    end
+                },
+                finally
+                {
+                    function ()
+                        os.tryrm(zipfile)
+                        os.tryrm(stagedir)
+                    end
+                }
+            }
+
+            ::continue::
+        end
+    end)
+rule_end()
+
+
+-- =============================================================================
+-- Target: Sample Models (asset download only, builds nothing)
+
+target("sample-models")
+    set_kind("phony")
+    set_default(false)
+    add_rules("gamegine.sample_models")

@@ -78,3 +78,7 @@ cmake-build-*/
 ./idea
 ./vscode
 ./zed
+
+# Sample assets downloaded by the "sample-models" target
+sample/models/*
+!sample/models/.gitkeep
