@@ -14,6 +14,14 @@ add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
 
 add_rules("mode.debug", "mode.release")
 
+-- =============================================================================
+-- Continuous Integration tasks
+--
+-- 'xmake ci-check' runs the push tier locally, exactly as the runner does.
+-- See ci/README.md for the job tiers and what each task enforces.
+
+includes("ci/tasks.lua")
+
 
 -- =============================================================================
 -- Sanitizers Configuration
@@ -115,6 +123,10 @@ rule_end()
 -- =============================================================================
 -- Package Dependencies
 
+-- Local package definitions, for dependencies pinned to an exact commit
+-- rather than to a published release. See xmake/packages/ and ci/pins.json.
+add_repositories("gamegine-packages xmake", {rootdir = os.scriptdir()})
+
 -- Vulkan SDK (LunarG / system Vulkan loader & headers)
 add_requires("vulkansdk")
 
@@ -127,6 +139,11 @@ add_requires("gtest", {configs = {main = true}})
 
 -- Google Benchmark framework
 add_requires("benchmark")
+
+-- Mesh optimization: clusterization, simplification and codecs (D0).
+-- Pinned to an exact commit because clusterlod.h needs APIs that no release
+-- carries yet; see xmake/packages/m/meshoptimizer/xmake.lua for why.
+add_requires("meshoptimizer 7d8eca58818927c6b2dbcdd44763f95b798d4232")
 
 
 -- =============================================================================
@@ -144,7 +161,13 @@ target("gamegine")
     add_files("gamegine/src/**.cpp")
 
     -- Dependencies
-    add_packages("vulkansdk", "fastgltf", {public = true})
+    add_packages("vulkansdk", "fastgltf", "meshoptimizer", {public = true})
+
+    -- clusterlod.h is a single header vendored from the upstream demo/
+    -- directory at the same commit as meshoptimizer. It is integrated, not
+    -- authored (D0), and one translation unit must define
+    -- CLUSTERLOD_IMPLEMENTATION before including it.
+    add_includedirs("third_party/clusterlod", {public = true})
 
     -- Cross-platform configuration:
     -- 1. macOS (Apple Silicon / arm64) using MoltenVK / Metal

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "_comment": [
+    "Which machine is which, and what its results are worth.",
+    "",
+    "ci.md section 2 says the two development laptops are the CI machines.",
+    "In practice there is also a third box that is neither: a laptop used for",
+    "writing code, where runs are mock. Without this registry a mock run on",
+    "it is indistinguishable in an archived bundle from a qualification run,",
+    "and that is precisely the confusion the evidence discipline exists to",
+    "prevent.",
+    "",
+    "role 'qualification' - the hardware in architecture.md section 2. Its",
+    "results are gate evidence and may be archived as such.",
+    "",
+    "role 'development' - anything else. Runs are mock: they exercise the",
+    "harness, they never substantiate a claim. A T3 gate bundle produced",
+    "here is rejected by 'xmake ci-bundle'.",
+    "",
+    "An unrecognised machine defaults to 'development'. Defaulting the other",
+    "way would let an unknown box quietly produce evidence."
+  ],
+
+  "unknown_machine_role": "development",
+
+  "machines": [
+    {
+      "id": "profile-l",
+      "label": "Profile L - RTX 4060 Laptop GPU, Core Ultra 9 185H, 32 GB",
+      "role": "qualification",
+      "profile": "L",
+      "match": { "host": "linux", "gpu_name_contains": "RTX 4060 Laptop" },
+      "runs": "Host build, shader compile for both targets, CPU fixtures, cooker, Vulkan golden images, timing smoke. Cooking is Linux-only (D5), so this is the only machine that can produce content."
+    },
+    {
+      "id": "profile-a",
+      "label": "Profile A - Apple M3 Pro, 18 GB unified",
+      "role": "qualification",
+      "profile": "A",
+      "match": { "host": "macosx", "gpu_name_contains": "Apple M3 Pro" },
+      "runs": "Host build, Metal golden images, timing smoke, decode of Linux-cooked packages. Profile A is not a qualification profile at R0 and is not gated; it becomes one from R2, one release behind on features (D2)."
+    },
+    {
+      "id": "dev-m2-air",
+      "label": "Development laptop - Apple M2, 24 GB unified (Mac14,2)",
+      "role": "development",
+      "profile": null,
+      "match": { "host": "macosx", "hardware_model": "Mac14,2" },
+      "runs": "Writing code, and mock runs that exercise the harness. This machine is NOT Profile A: it reports an M2 with 10 GPU cores and 24 GB against a claimed M3 Pro with 18 GB. Nothing measured here is a Profile A result, and no bundle produced here is gate evidence."
+    }
+  ]
+}

@@ -82,3 +82,14 @@ cmake-build-*/
 # Sample assets downloaded by the "sample-models" target
 sample/models/*
 !sample/models/.gitkeep
+
+# Benchmark result bundles. These are produced by vg_bench, not authored.
+# Gate bundles are retained forever, but outside the repository: correctness
+# images and masks committed into git make it unusable within a year
+# (ci.md sections 5 and 7).
+results/
+
+# Content-addressed object store for golden references and cooked packages.
+# The manifest recording which hash belongs to which fixture IS committed;
+# the objects are not (ci.md sections 5 and 12).
+cache/objects/
