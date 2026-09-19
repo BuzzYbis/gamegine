@@ -1,0 +1,45 @@
+Machine model: Mac15,6
+OS version: 25G83
+Boot arguments:
+Boot time: Mon Sep 15 09:12:03 2026
+
+*** Sampled system activity (Mon Sep 15 22:31:04 2026 +0200) (1001.02ms elapsed) ***
+
+
+**** Processor usage ****
+
+E-Cluster Online: 100%
+E-Cluster Frequency: 1104 MHz
+E-Cluster Idle Residency:  71.24%
+E-Cluster HW active frequency: 1284 MHz
+E-Cluster HW active residency:  28.76% (600 MHz: 2.1% 912 MHz: 9.4% 1284 MHz: 17%)
+
+P0-Cluster Online: 100%
+P0-Cluster Frequency: 3421 MHz
+P0-Cluster Idle Residency:  62.08%
+P0-Cluster HW active frequency: 3624 MHz
+P0-Cluster HW active residency:  37.92% (1164 MHz: 1.2% 3624 MHz: 36%)
+
+P1-Cluster Online: 100%
+P1-Cluster Frequency: 3388 MHz
+P1-Cluster Idle Residency:  64.51%
+P1-Cluster HW active frequency: 3576 MHz
+P1-Cluster HW active residency:  35.49% (1164 MHz: 0.9% 3576 MHz: 34%)
+
+**** GPU usage ****
+
+GPU HW active frequency: 1398 MHz
+GPU HW active residency:  88.42% (444 MHz: 1.1% 1398 MHz: 87%)
+GPU idle residency:  11.58%
+GPU Power: 8421 mW
+
+**** Processor Power ****
+
+CPU Power: 12043 mW
+GPU Power: 8421 mW
+ANE Power: 0 mW
+Combined Power (CPU + GPU + ANE): 20464 mW
+
+**** Thermal pressure ****
+
+Current pressure level: Nominal

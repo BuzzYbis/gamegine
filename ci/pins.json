@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "release": "R0",
+  "_comment": [
+    "Pinned inputs, per ci.md section 6. Reproducibility is worth nothing if",
+    "the inputs move. Entries under 'pinned' are bumped only in a dedicated",
+    "commit; entries under 'recorded' cannot be pinned and are captured per",
+    "run instead, where they are a valid explanation for a timing change and",
+    "never for a correctness change.",
+    "",
+    "Gate B0.4 is 'required': Slang, meshoptimizer and clusterlod.h versions",
+    "pinned and recorded in every manifest. An entry whose version is null is",
+    "UNPINNED and fails 'xmake ci-pins'. Do not invent a version to make the",
+    "check pass -- fill it in from the dependency you actually vendored."
+  ],
+  "pinned": {
+    "slang": {
+      "version": "2026.1-52-gc8ddf20bb",
+      "required_from": "R0",
+      "source": "https://github.com/shader-slang/slang",
+      "decision": "D3",
+      "probe": {
+        "program": "slangc",
+        "args": [
+          "-v"
+        ],
+        "stream": "stderr",
+        "pattern": "^(.+)$"
+      },
+      "bump_policy": "Named new baseline. Shader hashes change, so golden images are re-verified before the reference is updated."
+    },
+    "meshoptimizer": {
+      "version": "7d8eca58818927c6b2dbcdd44763f95b798d4232",
+      "version_kind": "commit",
+      "required_from": "R0",
+      "source": "https://github.com/zeux/meshoptimizer",
+      "decision": "D0",
+      "declares": {
+        "file": "xmake/packages/m/meshoptimizer/xmake.lua",
+        "must_contain": [
+          "7d8eca58818927c6b2dbcdd44763f95b798d4232",
+          "148ae3c53f8f007979ce74f43447b8e8f3bc4d04f934ce78f18bbb419aeecaa9"
+        ]
+      },
+      "tarball_sha256": "148ae3c53f8f007979ce74f43447b8e8f3bc4d04f934ce78f18bbb419aeecaa9",
+      "bump_policy": "Treated as a content format change: full re-cook, new package hashes, named new baseline. Bumped together with clusterlod_h, never alone.",
+      "note": "Pinned to a commit, not to the v1.2 release. clusterlod.h at the same commit calls meshopt_SimplifyErrorClamped and meshopt_SimplifyPreserveFolds, and neither symbol exists in v1.2. Verified 2026-09-15: 21 translation units plus a clusterlod.h implementation unit compile and link under -std=c++23."
+    },
+    "clusterlod_h": {
+      "version": "7d8eca58818927c6b2dbcdd44763f95b798d4232",
+      "version_kind": "commit",
+      "required_from": "R0",
+      "source": "https://github.com/zeux/meshoptimizer/blob/master/demo/clusterlod.h",
+      "decision": "D0",
+      "vendored": {
+        "path": "third_party/clusterlod/clusterlod.h",
+        "sha256": "a1f013e2f697e848812367be98258458fbd85323954edf876007c00328efbed1"
+      },
+      "bump_policy": "Treated as a content format change: full re-cook, new package hashes, named new baseline. Its API is explicitly evolving upstream, so a bump is never routine. Bumped together with meshoptimizer, never alone.",
+      "note": "Vendored from the upstream demo/ directory, which tracks master rather than releases. Upstream last touched this file on 2026-09-12 ('demo: Implement optional border dilation for clusterlod'), three days before pinning. The sha256 proves the vendored bytes are the pinned commit's bytes; editing the file in place is a silent fork and fails the check."
+    }
+  },
+  "recorded": {
+    "vulkan_instance": {
+      "probe": {
+        "program": "vulkaninfo",
+        "args": [
+          "--summary"
+        ],
+        "stream": "stdout",
+        "pattern": "Vulkan Instance Version:%s*([%d%.]+)"
+      },
+      "note": "SDK and driver cannot be pinned. Recorded per run. A correctness failure that coincides with a driver update is still a correctness failure until proven otherwise."
+    },
+    "xmake": {
+      "probe": {
+        "program": "xmake",
+        "args": [
+          "--version"
+        ],
+        "stream": "stdout",
+        "pattern": "xmake%s+v([%d%.%+]+)"
+      },
+      "note": "Build driver. Recorded so a build-system change is visible in the manifest."
+    },
+    "clang_format": {
+      "probe": {
+        "program": "clang-format",
+        "args": [
+          "--version"
+        ],
+        "stream": "stdout",
+        "pattern": "version%s+([%d%.]+)"
+      },
+      "note": "Formatting is a push-tier check; a clang-format major bump reformats the tree and must be a deliberate commit."
+    }
+  }
+}

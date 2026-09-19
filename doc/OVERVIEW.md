@@ -1,22 +1,39 @@
-This is an overview of the source code organisation: 
+# Overview of the source code 
+
+The following illustrates the content of the root directory: 
 
 ```
 .
-├── cmake/deps
-├── CMakeLists.txt
-├── compute
-├── core
-├── doc
-├── example
 ├── LICENSE
-└── README.md
-``` 
+├── README.md
+├── RELEASE_NOTES.md
+├── xmake.lua
+├── .clang-format
+├── .github
+├── benchmarks
+├── blog
+├── ci
+├── doc
+├── xmake
+├── gamegine
+├── tests
+└── third_party
+```
 
-- `cmake/dep` folder allow us to package dependencies so there is no install to do to have the header files we use. The header files we use are: 
-  - headers from nvidia to communicate with the GPU. 
-  - headers from Vulkan to allow us to do the interop from our computed images we compute to a displayed image. 
-  - headers from GLFW to handle user inputs. 
-- `compute` is the CUDA library that handle all the GPU operations of our engine.
-- `core` is the library that handle all the operations that our GPU do not (e.g. interop with Vulkan...). 
-- `doc` is our documnentation directory, you will find here all the source file of the complete project documentation. The light version of the documentation can be found in the [wiki](https://github.com/BuzzYbis/gamegine/wiki) section of this repository. 
-- `example` is a demonstration of a usage of our engine so can compile it and see what it does.
+- [LICENSE](../LICENSE) is the LICENSE of the project (Apache 2.0). 
+- [README.md](../README.md) contians the general information of the project. 
+- [RELEASE_NOTES.md](../RELEASE_NOTES.md) contains the detail of what is included in each release of the engine. 
+- [xmake.lua](../xmake.lua) is the build script of the engine. 
+- [.clang-format](../.clang-format) is the formatting contract (BDE style, 79 columns), enforced by `xmake ci-format`. 
+- [.github](../.github/) contains the GitHub Actions workflows; `push.yml` is the push and pull-request tier described in [ci.md](ci.md). 
+
+###
+
+- [benchmarks](/benchmarks/) contains the benchmarks of the engine. 
+- [blog](/blog/) contains the raw typst sources of our blog files on the engine internals working. 
+- [ci](/ci/) contains the CI tooling: pinned inputs, the frozen manifest schema, and the xmake tasks that enforce them. See [ci/README.md](../ci/README.md). 
+- [doc](/doc/) contains the general engine documentation. 
+- [gamegine](/gamegine/) contains the engine library. 
+- [tests](/tests/) contains the tests of the engine library. 
+- [third_party](/third_party/) contains the headers of third party we use, including `clusterlod.h`, vendored from the upstream meshoptimizer `demo/` directory and pinned by content hash. 
+- [xmake](/xmake/) contains local xmake package definitions for dependencies pinned to an exact upstream commit rather than to a published release. 

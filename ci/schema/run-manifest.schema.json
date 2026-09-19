@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gamegine/ci/schema/run-manifest.schema.json",
+  "title": "Benchmark run manifest",
+  "description": "The manifest at the root of every result bundle. Transcribed from benchmarks.md section 6, which is authoritative. This schema is a contract frozen at R0 (r0-architecture.md section 5): every later result is compared against R0's, so the schema has to survive. Adding a field is a compatible change; renaming or removing one is not, and invalidates comparison against archived bundles.",
+  "type": "object",
+  "required": [
+    "release", "benchmark", "tier", "status", "source_revision",
+    "asset_manifest_hash", "cooker_version", "shader_hash", "slang_version",
+    "clusterlod_version", "meshoptimizer_version", "feature_set_release",
+    "profile_a_trails_by_releases", "profile", "machine_manifest",
+    "machine_role", "evidence_eligible",
+    "memory_profile", "geometry_pool_mib", "resolution", "lod_error_px",
+    "raster_path", "mode", "runs", "warmup_seconds", "route_seconds",
+    "command"
+  ],
+  "additionalProperties": false,
+
+  "properties": {
+    "release": {
+      "type": "string",
+      "enum": ["R0", "R1", "R2", "R3", "R4"],
+      "description": "The release this run belongs to."
+    },
+    "benchmark": {
+      "type": "string",
+      "enum": ["B0", "B1-leaf", "B1-DAG", "B2-selection", "B2-occlusion",
+               "B3-streaming", "B3-temporal", "B4", "B4-M", "D6-experiment",
+               "BP1", "BP2", "BP3"],
+      "description": "Gate identifier from the registry in gates.md section 4."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["T1", "T2", "T3"],
+      "description": "T1 nightly CI, T2 weekly route, T3 gate protocol (benchmarks.md section 2)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "NOT_IMPLEMENTED", "UNAVAILABLE", "NOT_RUN"],
+      "description": "Per ci.md section 4. UNAVAILABLE is never a pass: a sleeping or busy runner reports UNAVAILABLE with its reason, and the report shows the last successful result together with its age."
+    },
+    "status_reason": {
+      "type": ["string", "null"],
+      "description": "Required in spirit whenever status is UNAVAILABLE or NOT_IMPLEMENTED: why, in words. A NOT_IMPLEMENTED row also carries the release by which it must clear."
+    },
+    "not_implemented_clears_by": {
+      "type": ["string", "null"],
+      "enum": ["R0", "R1", "R2", "R3", "R4", null],
+      "description": "For NOT_IMPLEMENTED rows: the release by which this must become PASS. Nothing may remain NOT_IMPLEMENTED past its date without a recorded schedule event."
+    },
+
+    "source_revision": {
+      "type": ["string", "null"],
+      "description": "Exact git revision of the engine under test."
+    },
+    "asset_manifest_hash": { "type": ["string", "null"] },
+    "generator_seed": {
+      "type": ["integer", "null"],
+      "description": "Procedural generator seed (D8), null when the generator was not used."
+    },
+    "cooker_version": { "type": ["string", "null"] },
+    "shader_hash": {
+      "type": ["string", "null"],
+      "description": "Hash over the compiled shader set, wired in at R0 (r0-architecture.md section 4)."
+    },
+
+    "slang_version": {
+      "type": ["string", "null"],
+      "description": "Pinned, per ci/pins.json. Gate B0.4 requires this, clusterlod_version and meshoptimizer_version to be present in EVERY manifest."
+    },
+    "clusterlod_version": { "type": ["string", "null"] },
+    "meshoptimizer_version": { "type": ["string", "null"] },
+
+    "feature_set_release": {
+      "type": ["string", "null"],
+      "enum": ["R0", "R1", "R2", "R3", "R4", null],
+      "description": "Which release's feature set the backend under test implements. Metal trails Vulkan by one release by design (D2)."
+    },
+    "profile_a_trails_by_releases": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "description": "How far Profile A is behind Profile L in feature coverage. Displayed on the report page every day, because 'one release behind' degrades into 'deferred' unless something shows the gap (ci.md section 7)."
+    },
+
+    "profile": {
+      "type": "string",
+      "enum": ["L", "A"],
+      "description": "L is the Linux/NVIDIA laptop, A the Apple Silicon laptop (architecture.md section 2)."
+    },
+    "backend": {
+      "type": ["string", "null"],
+      "enum": ["vulkan", "metal", "cpu-reference", "indexed-oracle", null],
+      "description": "The backend exercised. cpu-reference and indexed-oracle are the comparison targets for a Vulkan-only new-feature fixture."
+    },
+    "machine_role": {
+      "type": "string",
+      "enum": ["qualification", "development"],
+      "description": "Resolved from ci/machines.json by 'xmake ci-machine'. 'qualification' is the hardware named in architecture.md section 2; 'development' is any other box, where runs are mock. An unregistered machine defaults to 'development', because defaulting the other way would let an unknown machine quietly produce evidence."
+    },
+    "evidence_eligible": {
+      "type": "boolean",
+      "description": "Whether this bundle may be archived as evidence behind a published claim. False on a development machine. A T3 gate bundle with this false is rejected by 'xmake ci-bundle': gate bundles are the evidence behind the release report and they outlive the machines that produced them (ci.md section 7)."
+    },
+    "machine_manifest": {
+      "type": ["string", "null"],
+      "description": "Path to, or content hash of, the machine manifest captured by 'xmake ci-machine'."
+    },
+    "actual_physical_ram_gb": { "type": ["number", "null"] },
+    "actual_gpu_core_count": { "type": ["integer", "null"] },
+    "gpu_power_limit_w": {
+      "type": ["number", "null"],
+      "description": "Laptop results are valid for the recorded power and display configuration only."
+    },
+
+    "memory_profile": {
+      "type": "string",
+      "enum": ["normal", "stress", "comfort"],
+      "description": "normal 1024 MiB, stress 512 MiB, comfort 2048 MiB (architecture.md section 7). comfort is diagnostic only."
+    },
+    "geometry_pool_mib": { "type": "integer", "minimum": 1 },
+    "cooked_geometry_gib": { "type": ["number", "null"] },
+    "oversubscription_ratio": { "type": ["number", "null"] },
+
+    "resolution": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Render buffer in pixels, not the physical panel. Presentation scaling is recorded separately in the machine manifest."
+    },
+    "lod_error_px": { "type": "number", "minimum": 0 },
+    "raster_path": {
+      "type": "string",
+      "enum": ["mesh_shader", "indexed_indirect", "compute"],
+      "description": "mesh_shader is primary from R2 (D3b); indexed_indirect is kept permanently as oracle and fallback; compute exists only if the D6 experiment reopened, which defaults to no."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["warm", "engine-cold", "storage-cold"],
+      "description": "benchmarks.md section 2. Do not label a run storage-cold unless that state was actually established; if it cannot be, report it unavailable."
+    },
+    "runs": { "type": "integer", "minimum": 1 },
+    "warmup_seconds": { "type": "number", "minimum": 0 },
+    "route_seconds": { "type": "number", "minimum": 0 },
+
+    "measured_frame_p95_ms": { "type": ["number", "null"] },
+    "measured_frame_p99_ms": { "type": ["number", "null"] },
+    "measured_gpu_p95_ms": { "type": ["number", "null"] },
+    "measured_cpu_active_p95_ms": { "type": ["number", "null"] },
+
+    "command": {
+      "type": "string",
+      "description": "The actual command line that produced this bundle. benchmarks.md section 6: 'The manifest records the actual command'."
+    },
+    "started_at_utc": { "type": ["string", "null"] },
+    "finished_at_utc": { "type": ["string", "null"] }
+  }
+}

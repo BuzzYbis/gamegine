@@ -1,0 +1,29 @@
+*** Sampled system activity (Mon Sep 15 22:31:04 2026 +0200) (1000.44ms elapsed) ***
+
+**** Processor usage ****
+
+E-Cluster Online: 100%
+E-Cluster Frequency: 1052 MHz
+E-Cluster HW active frequency: 1024 MHz
+E-Cluster HW active residency:  14.69%
+
+P-Cluster Online: 100%
+P-Cluster Frequency: 2891 MHz
+P-Cluster HW active frequency: 3204 MHz
+P-Cluster HW active residency:   4.88%
+
+**** GPU usage ****
+
+GPU HW active frequency: 444 MHz
+GPU idle residency:  97.69%
+GPU Power: 24 mW
+
+**** Processor Power ****
+
+CPU Power: 234 mW
+GPU Power: 24 mW
+Combined Power (CPU + GPU + ANE): 258 mW
+
+**** Thermal pressure ****
+
+Current pressure level: Fair

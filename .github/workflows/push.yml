@@ -1,0 +1,222 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 BuzzY_ & Rether
+#
+# Push and pull-request validation -- ci.md section 3, tier one.
+#
+# Hosted runners only, no GPU, target under five minutes. "A job cannot
+# retroactively fail a push that has already happened; what it can do is block
+# a merge, so these are configured as required checks on the pull request."
+#
+# The OS matrix is not optional. Slang emitting MSL *text* on Linux and
+# Apple's toolchain *accepting* that text are different checks, and only the
+# second proves the shader will load on Profile A.
+#
+# Jobs whose inputs do not exist yet do not silently pass. They print what is
+# missing and what will make them real, because "silent skips are how a
+# backend quietly stops being tested" (ci.md section 4).
+
+name: push
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A developer who pushes twice should not tie up two runners; the older run is
+# redundant the moment the newer one starts.
+concurrency:
+  group: push-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # What exists in the tree right now. Later jobs read these outputs so that
+  # "nothing to build yet" is reported as a fact rather than inferred from a
+  # green tick.
+  inventory:
+    name: inventory
+    runs-on: ubuntu-latest
+    outputs:
+      has_cpp: ${{ steps.take.outputs.has_cpp }}
+      has_shaders: ${{ steps.take.outputs.has_shaders }}
+      cpp_sources: ${{ steps.take.outputs.cpp_sources }}
+      slang_shaders: ${{ steps.take.outputs.slang_shaders }}
+      pins_complete: ${{ steps.take.outputs.pins_complete }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - id: take
+        run: xmake ci-inventory --github
+
+      - name: Summarise
+        run: |
+          {
+            echo "### CI inventory"
+            echo ""
+            echo "| input | count |"
+            echo "| --- | --- |"
+            echo "| first-party C++ sources | ${{ steps.take.outputs.cpp_sources }} |"
+            echo "| Slang shaders | ${{ steps.take.outputs.slang_shaders }} |"
+            echo "| pins complete | ${{ steps.take.outputs.pins_complete }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Formatting is the cheapest check there is, so it runs first and alone.
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang-format
+      - name: Check formatting
+        run: xmake ci-format
+
+  # CPU fixtures. At R0 these are the CI tooling's own tests -- parsers and
+  # validators that run on machines nobody is watching. The math test vectors,
+  # quantization round-trips and cut-validity tests join them as they land.
+  # No GPU, no engine, so they run on every push.
+  tests:
+    name: CPU fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Run the CI tooling tests
+        run: xmake ci-test
+
+  # Every benchmark and cooker manifest validates against the schema.
+  # The committed examples are validated too: they are the tripwire for an
+  # incompatible edit to a contract frozen at R0.
+  schema:
+    name: manifest schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Validate the committed schema examples
+        run: |
+          xmake ci-schema \
+            --schema=ci/schema/run-manifest.schema.json \
+            ci/schema/examples/run-manifest.documented.json \
+            ci/schema/examples/run-manifest.unavailable.json
+
+      - name: Validate every result bundle in the tree
+        run: |
+          shopt -s nullglob globstar
+          bundles=(results/**/manifest.json)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "::notice title=No result bundles::No results/**/manifest.json in the tree. This job validates the committed schema examples only until vg_bench emits its first bundle (R0, bench/ deliverable)."
+            exit 0
+          fi
+          xmake ci-schema --schema=ci/schema/run-manifest.schema.json "${bundles[@]}"
+
+  # Gate B0.4.
+  #
+  # --tools-optional, because a hosted runner has no Slang install and failing
+  # there would report "the pin is wrong" when the truth is "this machine
+  # cannot check it". The file-based pins -- clusterlod.h's vendored sha256
+  # and meshoptimizer's commit in the package definition -- need no tool and
+  # are checked strictly here. The GPU runners and the gate run without the
+  # flag, where the toolchain genuinely must be present.
+  pins:
+    name: pinned inputs (B0.4)
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Verify pins
+        run: xmake ci-pins --tools-optional
+      - name: Flag unfilled pins
+        if: ${{ needs.inventory.outputs.pins_complete != 'true' }}
+        run: echo "::warning title=B0.4 not satisfied::ci/pins.json has unfilled entries. B0.4 is a required gate condition and blocks the end of R0. Fill in the exact tag or commit you vendored."
+
+
+  # Debug and release, both platforms' host code, warnings as errors.
+  build:
+    name: host build (${{ matrix.os }}, ${{ matrix.mode }})
+    needs: inventory
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        mode: [debug, release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report that there is nothing to build yet
+        if: ${{ needs.inventory.outputs.has_cpp != 'true' }}
+        run: |
+          echo "::notice title=Host build not yet active::gamegine/src contains no translation unit, so there is nothing to compile. This job becomes a real check with the first source file from the R0 core/, platform/, rhi/ and backends/vulkan/ deliverables (r0-architecture.md section 4). It is reported, not skipped silently."
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Install Linux build dependencies
+        if: ${{ needs.inventory.outputs.has_cpp == 'true' && matrix.os == 'ubuntu-latest' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libwayland-dev libxkbcommon-dev ninja-build
+
+      - name: Configure
+        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        run: xmake config --mode=${{ matrix.mode }} --yes
+
+      - name: Build
+        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        run: xmake build --yes
+
+  # Slang emits SPIR-V on Linux; Apple's toolchain accepts the MSL on macOS.
+  # A kernel that builds for one target and not the other fails here, not at a
+  # gate eighty weeks later.
+  shaders:
+    name: shader compile (${{ matrix.target }})
+    needs: inventory
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: spirv
+          - os: macos-latest
+            target: msl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report that there are no kernels yet
+        if: ${{ needs.inventory.outputs.has_shaders != 'true' }}
+        run: |
+          echo "::notice title=Shader compile not yet active::No shaders/**.slang in the tree. This job becomes a real check with the first kernel from the R0 shaders/ deliverable -- one non-trivial kernel compiled and running on both SPIR-V and MSL from a single Slang source (gate B0.1, required). It is reported, not skipped silently."
+
+      - name: Confirm the Metal toolchain is present
+        if: ${{ needs.inventory.outputs.has_shaders == 'true' && matrix.target == 'msl' }}
+        run: |
+          # B0.1 is only proven where 'metal' and 'metallib' actually accept
+          # the MSL. If the component is missing, say so loudly: a green tick
+          # from a machine that cannot compile Metal proves nothing.
+          if ! xcrun -sdk macosx metal --version; then
+            echo "::error title=Metal toolchain missing::'metal' is not installed on this runner. Install it with 'xcodebuild -downloadComponent MetalToolchain'. B0.1 cannot be evaluated without it, and an absent toolchain is UNAVAILABLE, never a pass."
+            exit 1
+          fi

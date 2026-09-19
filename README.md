@@ -1,27 +1,13 @@
-# Gamegine
+# Gamegine 
 
-This repo is the home of gamegine, which is a graphic engine working with 2D and 3D physics. 
+## Public artefact 
 
-## Build 
-
-```shell
-mkdir build
-cd build
-cmake ..
-cmake --build . --target engine  # to build the library
-cmake --build . --target example # to build the demonstrator
-```
-
-## Use 
-
-## Coding standard 
-
-We use the [coding standard](https://bloomberg.github.io/bde/knowledge_base/coding_standards.html) of BDE for C++.
+To download the artifacts necessary to run the tests (models...), see [https://kdrive.infomaniak.com/app/share/1926560/540dc381-0262-4a23-947b-7a5fc11790b3](https://kdrive.infomaniak.com/app/share/1926560/540dc381-0262-4a23-947b-7a5fc11790b3). If you plan on just run the test, we will curl and download the necessary models for you. 
 
 ## Overview of the source code
 
-See [doc/OVERVIEW.md](doc/OVERVIEW.md).
+See [doc/OVERVIEW.md](doc/OVERVIEW.md). 
 
-## Documentation 
+## Contributors
 
-If you want to see the complete documentation of this repository, see [here](). If you want to see a light version of our documentation, see our [wiki](https://github.com/BuzzYbis/gamegine/wiki) pages.
+See [doc/CONTRBUTORS.md](doc/CONTRIBUTORS.md). 
