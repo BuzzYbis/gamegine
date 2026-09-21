@@ -33,7 +33,8 @@ Checks: >
   -performance-enum-size,
   -readability-avoid-const-params-in-decls,
   -readability-uppercase-literal-suffix,
-  -readability-redundant-lambda-parameter-list
+  -readability-redundant-lambda-parameter-list,
+  readability-identifier-naming
 
 # Notes on the exclusions above, in order:
 #
@@ -69,6 +70,33 @@ Checks: >
 #   redundant-lambda-parameter-*  C++23 permits '[] -> T {}', but empty parens
 #                                 in a lambda are near-universal convention
 #                                 and read better.
+
+# The project's naming convention, enforced rather than remembered:
+#
+#   functions        snake_case        make_with_signed_context()
+#   types            CamelCase         Error, ErrorReasonTraits, Domain
+#   enumerators      e_                e_VULKAN
+#   private members  d_                d_raw
+#   class constants  k_                k_DOMAIN
+#   template params  t_                t_REASON
+#
+# Constructors are exempt by definition: they carry the type's name.
+#
+# The 'k_' prefix is scoped to CLASS and GLOBAL constants deliberately.
+# ConstexprVariablePrefix would also catch ordinary locals -- a 'constexpr
+# Error error' inside a test is not a named constant and should not wear the
+# prefix of one.
+CheckOptions:
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.EnumConstantPrefix: e_
+  readability-identifier-naming.PrivateMemberPrefix: d_
+  readability-identifier-naming.ClassConstantPrefix: k_
+  readability-identifier-naming.GlobalConstantPrefix: k_
+  readability-identifier-naming.TemplateParameterPrefix: t_
 
 WarningsAsErrors: '*'
 

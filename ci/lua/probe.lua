@@ -62,6 +62,7 @@ end
 -- opt.accept    a table of exit codes to treat as success, default {0}.
 --               Some tools report a version and exit non-zero.
 -- opt.timeout   milliseconds before the child is killed, default 10000.
+-- opt.allow_empty  treat empty output as success rather than UNAVAILABLE.
 --
 -- Never raises and never blocks indefinitely: a missing program, a non-zero
 -- exit, or a timeout all become UNAVAILABLE with the reason.
@@ -131,7 +132,9 @@ function run(program, argv, opt)
         text = (text or ""):trim()
     end
 
-    if text == "" then
+    -- Silence is failure for a version probe and success for a linter, so
+    -- the caller decides. clang-tidy prints nothing when it finds nothing.
+    if text == "" and not opt.allow_empty then
         return unavailable("command succeeded but produced no output", source)
     end
     return ok(text, source)

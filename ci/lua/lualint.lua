@@ -99,6 +99,13 @@ function check_file(file)
     local findings = {}
     local relative = path.relative(file, os.projectdir())
 
+    -- Module names bound by import(), so a local shadowing one can be
+    -- spotted below.
+    local imported = {}
+    for name in text:gmatch('import%("([^"]+)"') do
+        imported[name:match("([^.]+)$")] = true
+    end
+
     for i, raw_line in ipairs(lines) do
         local line = _strip_comment(raw_line)
 
@@ -142,6 +149,18 @@ function check_file(file)
                     ("calls %q, which xmake's Lua sandbox does not provide; "
                      .. "it will be nil at run time"):format(name)))
             end
+        end
+
+        -- A local that shadows an imported module. This one broke
+        -- 'ci-format' outright: a 'local style' for a clang-format argument
+        -- hid the imported 'style' module for the rest of the function, and
+        -- every style.say() after it became a nil call. Silent until the
+        -- task ran.
+        local declared = line:match("^%s*local%s+([%w_]+)%s*=")
+        if declared and imported[declared] then
+            table.insert(findings, _finding(relative, i,
+                ("local %q shadows the imported module of the same name")
+                :format(declared)))
         end
 
         -- File-scope constants nothing reads.

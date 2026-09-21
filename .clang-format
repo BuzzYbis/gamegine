@@ -10,7 +10,13 @@
 
 Language: Cpp
 BasedOnStyle: LLVM
-Standard: c++23
+# 'Latest' rather than a specific standard. clang-format rejects the WHOLE
+# config on one unknown value and silently falls back to LLVM defaults, so a
+# value only the newest release understands disables the project style for
+# anyone on an older one. Apple's clangd -- the formatter in the editor -- is
+# LLVM 21 and does not know 'c++23'. 'Latest' has been valid for years and
+# needs no revisiting when C++26 lands.
+Standard: Latest
 
 ColumnLimit: 79
 IndentWidth: 4

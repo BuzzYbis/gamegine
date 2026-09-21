@@ -33,6 +33,7 @@ task("ci-machine")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("core.base.json")
         import("machine", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -57,25 +58,25 @@ task("ci-machine")
         end
 
         if manifest.status == "UNSUPPORTED_HOST" then
-            cprint("${color.warning}%s", manifest.reason)
+            style.say("${warn}%s", manifest.reason)
             return
         end
 
-        cprint("${bright}machine manifest${clear}  host=%s arch=%s",
+        style.say("${bold}machine manifest${reset}  host=%s arch=%s",
                manifest.host, manifest.arch)
-        cprint("  %s", manifest.machine.label)
+        style.say("  %s", manifest.machine.label)
 
         if manifest.evidence_eligible then
-            cprint("${color.success}  qualification machine${clear}  "
+            style.say("${ok}  qualification machine${reset}  "
                    .. "profile %s  --  results from here are gate evidence",
                    manifest.profile.id or "?")
         else
-            cprint("${color.warning}  development machine${clear}  --  runs "
+            style.say("${warn}  development machine${reset}  --  runs "
                    .. "here are mock. They exercise the harness; they do not "
                    .. "substantiate a claim.")
             if not manifest.machine.known then
-                cprint("${color.warning}  this machine is not in "
-                       .. "ci/machines.json${clear}, so it defaulted to "
+                style.say("${warn}  this machine is not in "
+                       .. "ci/machines.json${reset}, so it defaulted to "
                        .. "'development'. Register it if that is wrong.")
             end
         end
@@ -85,14 +86,14 @@ task("ci-machine")
         -- Only checked on a qualification machine: elsewhere the hardware
         -- differs by design and the role already says so.
         if manifest.profile.checked and not manifest.profile.matches_claim then
-            cprint("${color.error}profile mismatch against architecture.md "
+            style.say("${bad}profile mismatch against architecture.md "
                    .. "section 2:")
             for _, m in ipairs(manifest.profile.mismatches) do
-                cprint("${color.error}  %-14s plan claims %-28s device "
+                style.say("${bad}  %-14s plan claims %-28s device "
                        .. "reports %s", m.field, tostring(m.claimed),
                        tostring(m.reported))
             end
-            cprint("${dim}  Recorded as measured. This machine is registered "
+            style.say("${dim}  Recorded as measured. This machine is registered "
                    .. "as qualification hardware but does not match the "
                    .. "claim; reconcile the registry or the claim before "
                    .. "archiving anything from it.")
@@ -101,7 +102,7 @@ task("ci-machine")
         -- Fields that share a cause are grouped under it. Repeating one long
         -- reason once per field buries the distinct gaps among the copies.
         if manifest.unavailable_count > 0 then
-            cprint("${color.warning}%d field(s) UNAVAILABLE "
+            style.say("${warn}%d field(s) UNAVAILABLE "
                    .. "(never counted as a pass):",
                    manifest.unavailable_count)
 
@@ -118,14 +119,14 @@ task("ci-machine")
             end
 
             for _, reason in ipairs(order) do
-                cprint("${dim}  %s", reason)
-                cprint("${dim}      %s",
+                style.say("${dim}  %s", reason)
+                style.say("${dim}      %s",
                        table.concat(byreason[reason], ", "))
             end
         end
 
         if output then
-            cprint("${color.success}wrote %s", output)
+            style.say("${ok}wrote %s", output)
         else
             print(encoded)
         end
@@ -153,6 +154,7 @@ task("ci-pins")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("core.base.json")
         import("pins", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -169,33 +171,34 @@ task("ci-pins")
             io.writefile(output, json.encode(report))
         end
 
-        cprint("${bright}pinned inputs${clear}  release=%s  (ci.md section 6)",
+        style.say("${bold}pinned inputs${reset}  release=%s  (ci.md section 6)",
                report.release)
         for _, e in ipairs(report.pinned) do
-            local colour = "${color.success}"
+            local colour = "${ok}"
             if e.status == "UNPINNED" or e.status == "MISMATCH"
                or e.status == "PROBE_UNAVAILABLE" then
-                colour = "${color.error}"
+                colour = "${bad}"
             elseif e.status ~= "PINNED_VERIFIED" then
-                colour = "${color.warning}"
+                colour = "${warn}"
             end
             if e.blocking == false then
-                colour = "${color.warning}"
+                colour = "${warn}"
             end
             if e.status == "UNVERIFIABLE_HERE" then
-                colour = "${color.warning}"
+                colour = "${warn}"
             end
-            cprint(colour .. "  %-16s %-18s${clear} %s", e.name, e.status,
+            style.say(colour .. "  %-16s %-18s${reset} %s", e.name, e.status,
                    e.detected or e.pinned or "")
             if e.detail then
-                cprint("${dim}    %s", e.detail)
+                style.say("${dim}    %s", e.detail)
             end
         end
 
-        cprint("${bright}recorded per run${clear}  (cannot be pinned)")
+        style.say("${bold}recorded per run${reset}  (cannot be pinned)")
         for _, e in ipairs(report.recorded) do
-            cprint("  %-16s %-18s %s", e.name, e.status,
-                   tostring(e.value or e.reason or ""))
+            style.say("  %-16s %s %s", e.name,
+                      style.statusword(e.status, 18),
+                      tostring(e.value or e.reason or ""))
         end
 
         if ok and report.allow_unpinned then
@@ -206,8 +209,8 @@ task("ci-pins")
                 end
             end
             if unpinned > 0 then
-                cprint("")
-                cprint("${color.warning}%d pin(s) still unfilled.${clear} "
+                style.say("")
+                style.say("${warn}%d pin(s) still unfilled.${reset} "
                        .. "Reported, not failed, because --allow-unpinned "
                        .. "was given. Gate B0.4 runs without it and will "
                        .. "block the end of R0.", unpinned)
@@ -216,16 +219,16 @@ task("ci-pins")
         end
 
         if not ok then
-            cprint("")
-            cprint("${color.error}B0.4 does not pass.${clear} Gate B0.4 is "
+            style.say("")
+            style.say("${bad}B0.4 does not pass.${reset} Gate B0.4 is "
                    .. "'required': Slang, meshoptimizer and clusterlod.h "
                    .. "versions pinned and recorded in every manifest.")
-            cprint("${dim}Fill in ci/pins.json with the exact tag or commit "
+            style.say("${dim}Fill in ci/pins.json with the exact tag or commit "
                    .. "you vendored. Do not invent a version to turn this "
                    .. "green.")
             raise("pinned inputs are not satisfied")
         end
-        cprint("${color.success}B0.4 satisfied on this machine.")
+        style.say("${ok}B0.4 satisfied on this machine.")
     end)
 task_end()
 
@@ -242,6 +245,7 @@ task("ci-schema")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("jsonschema",
                {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -258,12 +262,12 @@ task("ci-schema")
         for _, doc in ipairs(documents) do
             local ok, errors = jsonschema.validate_file(doc, schema)
             if ok then
-                cprint("${color.success}ok${clear}   %s", doc)
+                style.say("${ok}ok${reset}   %s", doc)
             else
                 failed = failed + 1
-                cprint("${color.error}FAIL${clear} %s", doc)
+                style.say("${bad}FAIL${reset} %s", doc)
                 for _, e in ipairs(errors) do
-                    cprint("${dim}       %s", e)
+                    style.say("${dim}       %s", e)
                 end
             end
         end
@@ -285,6 +289,7 @@ task("ci-bundle")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("bundle", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
@@ -297,19 +302,19 @@ task("ci-bundle")
         for _, dir in ipairs(bundles) do
             local report, ok = bundle.validate(dir)
             if ok then
-                cprint("${color.success}ok${clear}   %s  (gate %s, %s)", dir,
+                style.say("${ok}ok${reset}   %s  (gate %s, %s)", dir,
                        report.gate or "?", report.status or "?")
             else
                 failed = failed + 1
-                cprint("${color.error}FAIL${clear} %s", dir)
+                style.say("${bad}FAIL${reset} %s", dir)
             end
             for _, f in ipairs(report.findings) do
-                local colour = f.severity == "error" and "${color.error}"
-                               or "${color.warning}"
-                cprint(colour .. "       %-8s${clear} %s", f.severity,
+                local colour = f.severity == "error" and "${bad}"
+                               or "${warn}"
+                style.say(colour .. "       %-8s${reset} %s", f.severity,
                        f.message)
                 if f.why then
-                    cprint("${dim}                %s", f.why)
+                    style.say("${dim}                %s", f.why)
                 end
             end
         end
@@ -332,6 +337,7 @@ task("ci-format")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("probe", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -344,21 +350,24 @@ task("ci-format")
 
         local files = sources.list()
         if #files == 0 then
-            cprint("${color.warning}no first-party sources yet; nothing to "
+            style.say("${warn}no first-party sources yet; nothing to "
                    .. "check")
             return
         end
 
-        local style = "file:" .. path.join(os.projectdir(), ".clang-format")
+        -- Not named 'style': that is the output module imported above, and
+        -- a local of the same name shadows it for the rest of the function.
+        local style_arg = "file:"
+                          .. path.join(os.projectdir(), ".clang-format")
         local fix = option.get("fix")
         local offenders = {}
 
         for _, f in ipairs(files) do
             if fix then
-                os.execv("clang-format", {"-i", "--style=" .. style, f})
+                os.execv("clang-format", {"-i", "--style=" .. style_arg, f})
             else
                 local formatted = os.tmpfile()
-                local code = os.execv("clang-format", {"--style=" .. style, f},
+                local code = os.execv("clang-format", {"--style=" .. style_arg, f},
                                       {stdout = formatted, try = true})
                 if code == 0 then
                     if io.readfile(formatted) ~= io.readfile(f) then
@@ -370,20 +379,20 @@ task("ci-format")
         end
 
         if fix then
-            cprint("${color.success}formatted %d file(s) with clang-format %s",
+            style.say("${ok}formatted %d file(s) with clang-format %s",
                    #files, version.value)
             return
         end
 
         if #offenders > 0 then
             for _, f in ipairs(offenders) do
-                cprint("${color.error}needs formatting${clear} %s",
+                style.say("${bad}needs formatting${reset} %s",
                        path.relative(f, os.projectdir()))
             end
             raise("%d of %d file(s) are not formatted; run "
                   .. "'xmake ci-format --fix'", #offenders, #files)
         end
-        cprint("${color.success}%d file(s) formatted correctly "
+        style.say("${ok}%d file(s) formatted correctly "
                .. "(clang-format %s)", #files, version.value)
     end)
 task_end()
@@ -401,6 +410,7 @@ task("ci-check")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("core.base.task")
 
@@ -411,6 +421,7 @@ task("ci-check")
             {name = "format", task = "ci-format"},
             {name = "lua",    task = "ci-lua"},
             {name = "tests",  task = "ci-test"},
+            {name = "unit",   task = "ci-unit"},
             -- B0.4 is a release-gate condition, so the local push tier
             -- reports unfilled pins rather than failing on them.
             -- Locally the toolchain is present, so tool pins are checked
@@ -421,8 +432,8 @@ task("ci-check")
 
         local failures = {}
         for _, step in ipairs(steps) do
-            cprint("")
-            cprint("${bright}== %s ==", step.name)
+            style.say("")
+            style.say("${bold}== %s ==", step.name)
             local failed = nil
             try
             {
@@ -444,14 +455,14 @@ task("ci-check")
             end
         end
 
-        cprint("")
+        style.say("")
         if #failures > 0 then
             for _, f in ipairs(failures) do
-                cprint("${color.error}%s failed${clear}", f.name)
+                style.say("${bad}%s failed${reset}", f.name)
             end
             raise("push tier failed: %d step(s)", #failures)
         end
-        cprint("${color.success}push tier passed")
+        style.say("${ok}push tier passed")
     end)
 task_end()
 
@@ -469,6 +480,7 @@ task("ci-inventory")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("core.base.json")
         import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -517,23 +529,23 @@ task("ci-inventory")
             first_party_roots = sources.roots(),
         }
 
-        cprint("${bright}CI inventory${clear}  (what exists, and what does "
+        style.say("${bold}CI inventory${reset}  (what exists, and what does "
                .. "not)")
-        cprint("  first-party C++ sources   %d  (%d translation units)",
+        style.say("  first-party C++ sources   %d  (%d translation units)",
                inventory.cpp_sources, inventory.translation_units)
-        cprint("  Slang shaders             %d", inventory.slang_shaders)
-        cprint("  result bundles            %d", inventory.result_bundles)
-        cprint("  pins complete             %s%s",
-               tostring(inventory.pins_complete),
-               #unpinned > 0 and ("  (missing: "
-                                  .. table.concat(unpinned, ", ") .. ")")
-                              or "")
-        cprint("${bright}ci.md section 11 build-out${clear}")
+        style.say("  Slang shaders             %d", inventory.slang_shaders)
+        style.say("  result bundles            %d", inventory.result_bundles)
+        style.say("  pins complete             %s%s",
+                  style.flag(inventory.pins_complete),
+                  #unpinned > 0 and ("  (missing: "
+                                     .. table.concat(unpinned, ", ") .. ")")
+                                 or "")
+        style.say("${bold}ci.md section 11 build-out${reset}")
         for _, b in ipairs(buildout) do
-            local mark = b.done and "${color.success}done   "
-                         or b.partial and "${color.warning}partial"
-                         or "${color.warning}pending"
-            cprint("  %s${clear}  step %d  %s", mark, b.step, b.what)
+            local mark = b.done and "${ok}done   "
+                         or b.partial and "${warn}partial"
+                         or "${warn}pending"
+            style.say("  %s${reset}  step %d  %s", mark, b.step, b.what)
         end
 
         local output = option.get("output")
@@ -562,7 +574,7 @@ task("ci-inventory")
                 local existing = io.readfile(gh) or ""
                 io.writefile(gh, existing .. table.concat(lines, "\n") .. "\n")
             else
-                cprint("${color.warning}--github given but $GITHUB_OUTPUT is "
+                style.say("${warn}--github given but $GITHUB_OUTPUT is "
                        .. "not set; nothing written")
             end
         end
@@ -579,6 +591,7 @@ task("ci-test")
         options = {}
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("testing", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
         -- These guard parsers and validators that run on machines nobody is
@@ -597,16 +610,16 @@ task("ci-test")
 
             total = total + t.passed + #t.failures
             if #t.failures == 0 then
-                cprint("${color.success}ok${clear}   %-22s %d checks", name,
+                style.say("${ok}ok${reset}   %-22s %d checks", name,
                        t.passed)
             else
                 failed = failed + #t.failures
-                cprint("${color.error}FAIL${clear} %-22s %d passed, %d failed",
+                style.say("${bad}FAIL${reset} %-22s %d passed, %d failed",
                        name, t.passed, #t.failures)
                 for _, f in ipairs(t.failures) do
-                    cprint("${color.error}       %s${clear}", f.label)
+                    style.say("${bad}       %s${reset}", f.label)
                     if f.detail ~= "" then
-                        cprint("${dim}         %s", f.detail)
+                        style.say("${dim}         %s", f.detail)
                     end
                 end
             end
@@ -615,7 +628,7 @@ task("ci-test")
         if failed > 0 then
             raise("%d of %d checks failed", failed, total)
         end
-        cprint("${color.success}%d checks passed", total)
+        style.say("${ok}%d checks passed", total)
     end)
 task_end()
 
@@ -640,6 +653,7 @@ task("bench")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("bench", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
@@ -671,28 +685,28 @@ task("bench")
             command    = table.concat(parts, " "),
         })
 
-        cprint("${bright}%s / %s${clear}  status=%s", manifest.benchmark,
+        style.say("${bold}%s / %s${reset}  status=%s", manifest.benchmark,
                manifest.tier, manifest.status)
-        cprint("  bundle           %s", dir)
-        cprint("  machine role     %s", manifest.machine_role)
-        cprint("  evidence         %s",
+        style.say("  bundle           %s", dir)
+        style.say("  machine role     %s", manifest.machine_role)
+        style.say("  evidence         %s",
                manifest.evidence_eligible and "eligible"
-               or "${color.warning}NOT eligible (mock run)${clear}")
+               or "${warn}NOT eligible (mock run)${reset}")
         if manifest.status_reason then
-            cprint("${dim}  %s", manifest.status_reason)
+            style.say("${dim}  %s", manifest.status_reason)
         end
 
         for _, f in ipairs(report.findings or {}) do
-            local colour = f.severity == "error" and "${color.error}"
-                           or "${color.warning}"
-            cprint(colour .. "  %-8s${clear} %s", f.severity, f.message)
+            local colour = f.severity == "error" and "${bad}"
+                           or "${warn}"
+            style.say(colour .. "  %-8s${reset} %s", f.severity, f.message)
         end
 
         if not ok then
             raise("the harness emitted a bundle that does not validate; "
                   .. "this is a harness bug, not a run failure")
         end
-        cprint("${color.success}bundle validates against the frozen schema")
+        style.say("${ok}bundle validates against the frozen schema")
     end)
 task_end()
 
@@ -707,15 +721,16 @@ task("ci-lua")
         options = {}
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("lualint", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
         local findings, count = lualint.check()
         if #findings == 0 then
-            cprint("${color.success}%d Lua file(s) clean", count)
+            style.say("${ok}%d Lua file(s) clean", count)
             return
         end
         for _, f in ipairs(findings) do
-            cprint("${color.error}%s:%d${clear} %s", f.file, f.line,
+            style.say("${bad}%s:%d${reset} %s", f.file, f.line,
                    f.message)
         end
         raise("%d finding(s) in %d Lua file(s)", #findings, count)
@@ -734,6 +749,7 @@ task("ci-tidy")
         }
     }
     on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -766,7 +782,7 @@ task("ci-tidy")
 
         local units = sources.translation_units()
         if #units == 0 then
-            cprint("${color.warning}no first-party translation units yet; "
+            style.say("${warn}no first-party translation units yet; "
                    .. "nothing to analyse")
             return
         end
@@ -782,17 +798,36 @@ task("ci-tidy")
             end
             table.insert(argv, unit)
 
+            -- allow_empty because clang-tidy prints nothing when clean;
+            -- accept 1 so its findings arrive as output rather than as a
+            -- failed probe, which is what lets them be reported per file.
             local record = probe.run(tidy, argv,
                                      {lines = true, stream = "both",
+                                      allow_empty = true, accept = {0, 1},
                                       timeout = 300000})
-            if record.status == "OK" then
-                cprint("${color.success}ok${clear}   %s", relative)
-            else
+            if record.status ~= "OK" then
                 failed = failed + 1
-                cprint("${color.error}FAIL${clear} %s", relative)
-                for line in tostring(record.reason or ""):gmatch("[^\n]+") do
+                style.say("${bad}FAIL${reset} %s ${dim}(clang-tidy could not "
+                          .. "run)${reset}", relative)
+                style.say("${dim}       %s${reset}", record.reason or "")
+            else
+                -- A finding usually lives in a HEADER the unit included, not
+                -- in the unit itself. Reporting only the unit sends the
+                -- reader to the wrong file, so each finding names its own.
+                local findings = {}
+                for line in tostring(record.value):gmatch("[^\n]+") do
                     if line:find("error:") or line:find("warning:") then
-                        cprint("${dim}       %s", line)
+                        table.insert(findings, line)
+                    end
+                end
+                if #findings == 0 then
+                    style.say("${ok}ok${reset}   %s", relative)
+                else
+                    failed = failed + 1
+                    style.say("${bad}FAIL${reset} %s ${dim}(%d finding(s))"
+                              .. "${reset}", relative, #findings)
+                    for _, line in ipairs(findings) do
+                        style.say("${dim}       %s${reset}", line)
                     end
                 end
             end
@@ -801,6 +836,145 @@ task("ci-tidy")
         if failed > 0 then
             raise("%d translation unit(s) have findings", failed)
         end
-        cprint("${color.success}%d translation unit(s) clean", #units)
+        style.say("${ok}%d translation unit(s) clean", #units)
+    end)
+task_end()
+
+-- ------------------------------------------------------------- ci-style ---
+
+task("ci-style")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-style",
+        description = "Preview the output palette in your own terminal.",
+        options = {}
+    }
+    on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        style.say("${bold}palette preview${reset}  "
+                  .. "-- every line below must be readable on YOUR background")
+        style.say("")
+        style.say("  ${ok}ok${reset}       success   #2E8B2E   "
+                  .. "worst-case contrast 4.33")
+        style.say("  ${bad}FAIL${reset}     failure   #D1242F   "
+                  .. "worst-case contrast 4.00")
+        style.say("  ${warn}warning${reset}  caution   #9A6700   "
+                  .. "worst-case contrast 4.31")
+        style.say("  ${note}note${reset}     detail    #1F6FEB   "
+                  .. "worst-case contrast 4.53")
+        style.say("  ${dim}dim${reset}      context   #6E7781   "
+                  .. "worst-case contrast 4.55")
+        style.say("")
+        style.say("${dim}4.58 is the ceiling for any colour against both "
+                  .. "black and white, so these are within 0.3 of the best "
+                  .. "possible.${reset}")
+        style.say("${dim}If a line is still hard to read, say which one and "
+                  .. "what your background is; the hue can move without "
+                  .. "losing contrast.${reset}")
+        style.say("")
+        style.say("${dim}NO_COLOR=1 disables colour entirely.${reset}")
+    end)
+task_end()
+
+-- -------------------------------------------------------------- ci-unit ---
+
+task("ci-unit")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-unit [--filter=<pattern>]",
+        description = "Build and run the C++ unit tests.",
+        options = {
+            {'f', "filter", "kv", nil, "GoogleTest filter, e.g. 'CoreError.*'."},
+            {'a', "show-all", "k", nil, "Show every test, not just "
+                                        .. "failures."},
+        }
+    }
+    on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("core.base.option")
+        import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        -- 'xmake test' exists, but its summary is printed by xmake itself in
+        -- full-brightness truecolour that no project setting can reach. This
+        -- task runs the same binary and reports through style.lua, so unit
+        -- test output is readable on the same backgrounds as everything else.
+        if #sources.translation_units() == 0 then
+            style.say("${warn}no translation units yet; nothing to test"
+                      .. "${reset}")
+            return
+        end
+
+        local built = os.execv("xmake", {"build", "--yes", "tests"},
+                               {stdout = os.tmpfile(), stderr = os.tmpfile(),
+                                try = true})
+        if built ~= 0 then
+            raise("the test target failed to build")
+        end
+
+        local binaries = os.files(path.join(os.projectdir(), "build",
+                                            "**", "tests"))
+        if #binaries == 0 then
+            raise("built the test target but found no binary under build/")
+        end
+
+        local argv = {"--gtest_color=no"}
+        if option.get("filter") then
+            table.insert(argv, "--gtest_filter=" .. option.get("filter"))
+        end
+
+        local record = probe.run(binaries[1], argv,
+                                 {lines = true, stream = "both",
+                                  accept = {0, 1}, timeout = 600000})
+        if record.status ~= "OK" then
+            raise("could not run the tests: %s", record.reason)
+        end
+
+        -- Parse GoogleTest's plain output rather than trusting an exit code,
+        -- so the summary names what failed.
+        local passed, failed, suites = 0, {}, nil
+        for line in record.value:gmatch("[^\n]+") do
+            local n = line:match("^%[%s*PASSED%s*%]%s+(%d+) test")
+            if n then
+                passed = tonumber(n)
+            end
+            local name = line:match("^%[%s*FAILED%s*%]%s+([%w_]+%.[%w_]+)")
+            if name then
+                local seen = false
+                for _, f in ipairs(failed) do
+                    if f == name then
+                        seen = true
+                    end
+                end
+                if not seen then
+                    table.insert(failed, name)
+                end
+            end
+            local ran = line:match("(%d+ tests? from %d+ test suites? ran)")
+            if ran then
+                suites = ran
+            end
+            if option.get("show-all") then
+                local ok_name = line:match("^%[%s*OK%s*%]%s+(.+)$")
+                if ok_name then
+                    style.say("  ${ok}pass${reset}  %s", ok_name)
+                end
+            end
+        end
+
+        for _, name in ipairs(failed) do
+            style.say("  ${bad}FAIL${reset}  %s", name)
+        end
+
+        if #failed > 0 then
+            style.say("")
+            style.say("${bad}%d failed${reset}, %d passed%s", #failed, passed,
+                      suites and ("   (" .. suites .. ")") or "")
+            raise("%d unit test(s) failed", #failed)
+        end
+
+        style.say("${ok}%d test(s) passed${reset}%s", passed,
+                  suites and ("   ${dim}(" .. suites .. ")${reset}") or "")
     end)
 task_end()
