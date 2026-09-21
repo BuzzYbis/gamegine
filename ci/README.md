@@ -29,6 +29,7 @@ runs before pushing.
 | `xmake bench` | Runs a benchmark tier and emits a result bundle | **bench/** |
 | `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
 | `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
+| `xmake ci-style` | Previews the output palette in your terminal | — |
 
 ```bash
 xmake ci-check                              # before pushing
@@ -55,9 +56,16 @@ ci/
 │   ├── jsonschema.lua       a small JSON Schema subset
 │   ├── bundle.lua           result-bundle layout         (benchmarks.md §6)
 │   ├── bench.lua            the vg_bench harness
-│   └── sources.lua          which files are ours to police
+│   ├── sources.lua          which files are ours to police
+│   ├── lualint.lua          dead code and sandbox traps
+│   ├── style.lua            output readable on any background
+│   └── testing.lua          assertions for the Lua tests
+├── meta/
+│   └── xmake.lua            xmake API types for the language server
+├── test/                    the Lua tests, run by 'xmake ci-test'
 └── schema/
     ├── run-manifest.schema.json      the frozen manifest contract
+    ├── machine-manifest.schema.json  the machine manifest contract
     └── examples/                     committed tripwire fixtures
 ```
 
@@ -138,6 +146,97 @@ it predates does not link.
 Both are pinned to the **same commit** and are bumped **together**. A bump of
 either is a content format change: full re-cook, new package hashes, named new
 baseline.
+
+---
+
+## Terminal output
+
+All output goes through `style.lua`, which uses **fixed colours chosen by
+measurement** — not the terminal's palette, and not xmake's tokens.
+
+Both of those delegate the decision. xmake's `${green}` is `38;2;0;255;0`,
+pure RGB at full brightness; the 16-colour codes name a slot the theme
+resolves however it likes. Either way the result depends on the reader's
+setup, and on a light theme both produce text you cannot see.
+
+A colour is legible on white *and* black only if its relative luminance sits
+in a narrow band. Each value was picked for its **worst-case WCAG contrast** —
+the weaker of its two ratios — because that is what decides readability:
+
+| Role | Colour | vs white | vs black | worst |
+| --- | --- | --- | --- | --- |
+| `ok` | `#2E8B2E` | 4.33 | 4.85 | **4.33** |
+| `bad` | `#D1242F` | 5.24 | 4.00 | **4.00** |
+| `warn` | `#9A6700` | 4.87 | 4.31 | **4.31** |
+| `note` | `#1F6FEB` | 4.63 | 4.53 | **4.53** |
+| `dim` | `#6E7781` | 4.55 | 4.62 | **4.55** |
+
+**4.58 is the ceiling.** Contrast against white falls as a colour lightens
+while contrast against black rises, so the best any colour can manage on both
+at once is where those curves cross. Everything here is within 0.3 of that
+limit — there is no better choice available, only different hues.
+
+`dim` is a colour, not the ANSI dim attribute (`ESC[2m`): that attribute
+lightens the foreground, which on a light theme moves text *toward* the
+background.
+
+Two rules the module enforces:
+
+- **Colour is never the only signal.** Every line meaning "this failed" says
+  so in words, so it survives a monochrome terminal, a piped log, and a reader
+  who cannot distinguish red from green.
+- **Lines always close.** `say()` appends a reset whenever it emitted an
+  escape, so a forgotten `${reset}` cannot bleed into the rest of the session.
+
+```bash
+xmake ci-style     # preview the palette in your own terminal
+NO_COLOR=1 ...     # disable colour entirely
+```
+
+---
+
+## File suffix conventions
+
+| Suffix | Is |
+| --- | --- |
+| `<component>.cpp` | library source |
+| `<component>.t.cpp` | unit test |
+| `<component>.b.cpp` | benchmark |
+| `<component>.m.cpp` | an executable's main |
+
+The build keys off these: the library archives `**.cpp` minus the three, the
+test target takes `**.t.cpp` only, benchmarks `**.b.cpp` only. A test beside
+its component is never archived into the library, and a stray `.cpp` in the
+test tree is not silently compiled as a test.
+
+---
+
+## Editor formatting
+
+Two traps cost an evening between them, so both are written down.
+
+**clang-format rejects the whole config on one unknown value**, then falls
+back to LLVM defaults *silently*. `Standard: c++23` is valid in clang-format
+23 and unknown to LLVM 21 — which is what Apple's clangd embeds — so the whole
+project style was ignored in the editor while the CLI was fine. `Standard` is
+now `Latest`, understood by every version for years. Verified: byte-identical
+output under clang-format 23.
+
+**libFormat's line breaking changes between LLVM releases.** Even with a
+config both accept, clangd 21 and clang-format 23 disagree on one wrap, so
+format-on-save and `ci-format --fix` would fight over that line forever. Point
+the editor at the same LLVM the CLI uses:
+
+```json
+// user settings, macOS
+"clangd.path": "/opt/homebrew/opt/llvm/bin/clangd"
+```
+
+With that, clangd wants **zero** edits to a file `ci-format` considers clean.
+
+The general rule: if the editor and `xmake ci-format` disagree, they are
+running different libFormat versions. `ci-format` is the authority — it is
+what the runner uses.
 
 ---
 

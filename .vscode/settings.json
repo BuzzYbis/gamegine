@@ -1,0 +1,57 @@
+{
+  // C++ formatting is decided by .clang-format at the repository root.
+  //
+  // The formatter here is clangd, which reads .clang-format directly and has
+  // no style setting to override -- so there is nothing to configure for it.
+  // What matters instead is that .clang-format stays parseable by the clangd
+  // in use: it rejects the WHOLE file on a single unknown value and silently
+  // falls back to LLVM defaults. That is why 'Standard' is 'Latest' and not a
+  // specific standard; Apple's clangd is LLVM 21 and does not know 'c++23'.
+  //
+  // The C_Cpp.* keys below do nothing under clangd. They are here for anyone
+  // using the Microsoft C/C++ extension instead, so both developers get the
+  // same result. 'fallbackStyle: none' is the important one: if the config
+  // cannot be read, leave the file ALONE rather than reformatting it to LLVM.
+  // An unformatted file is obvious; a wrongly formatted one is not.
+  // Which clangd matters, because libFormat's line-breaking changes between
+  // LLVM releases. Apple's clangd is 21 and disagrees with clang-format 23
+  // on one wrap in core_error.t.cpp, so a save and 'ci-format --fix' would
+  // fight over that line forever. Pointing the editor at the same LLVM the
+  // CLI uses gives zero disagreement. The path is macOS-specific, so set it
+  // in USER settings rather than here; this is only a reminder.
+  //
+  //   "clangd.path": "/opt/homebrew/opt/llvm/bin/clangd"
+  "C_Cpp.formatting": "clangFormat",
+  "C_Cpp.clang_format_style": "file",
+  "C_Cpp.clang_format_fallbackStyle": "none",
+  "[cpp]": {
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.rulers": [
+      79
+    ]
+  },
+  "[c]": {
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.rulers": [
+      79
+    ]
+  },
+  // Lua sandbox definitions, mirroring .luarc.json.
+  "Lua.workspace.library": [
+    "ci/meta"
+  ],
+  "Lua.diagnostics.disable": [
+    "lowercase-global"
+  ],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "search.exclude": {
+    "**/build": true,
+    "**/.xmake": true,
+    "**/third_party": true
+  }
+}
