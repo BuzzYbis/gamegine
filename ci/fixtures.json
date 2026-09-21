@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "_comment": [
+    "The fixture corpus. R0 creates S0 and S1 (r0-benchmarks.md section 2);",
+    "later releases add their own and register them here.",
+    "",
+    "A fixture with build.status other than 'built' is reported NOT_RUN by",
+    "the harness, with the reason carried through to the manifest. It is",
+    "never silently omitted from a run: a fixture that quietly stops being",
+    "listed is a fixture that regresses unnoticed (ci.md section 11)."
+  ],
+
+  "fixtures": [
+    {
+      "id": "S0",
+      "created_in": "R0",
+      "definition": "1 M triangles across plane, sphere, cubes, sloped surfaces, with fixed overlapping and near-plane cases",
+      "serves": "Every later release",
+      "build": {
+        "status": "not_built",
+        "reason": "no cooker and no scene format yet; S0 is authored during R0"
+      }
+    },
+    {
+      "id": "S1",
+      "created_in": "R0",
+      "definition": "10 M unique triangles, ten dense rigid meshes, hard edges, UV seams, multiple material sections",
+      "serves": "Pulled forward from R1. At R0 a single 10 M source mesh with no engine format is enough -- the clusterlod.h builder run needs geometry, not a cooked package",
+      "build": {
+        "status": "not_built",
+        "reason": "source mesh not yet acquired; needed for the clusterlod.h builder measurement"
+      }
+    }
+  ]
+}

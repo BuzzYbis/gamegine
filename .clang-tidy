@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 BuzzY_ & Rether
+#
+# Static analysis for first-party C++. This is the "lint" half of ci.md
+# section 3's "Format and lint" row; clang-format is the other half.
+#
+#   xmake ci-tidy        # analyse changed first-party sources
+#   xmake ci-tidy --all  # analyse everything
+#
+# Checks are chosen to catch defects, not to enforce taste. A check that
+# fires on correct, idiomatic code in this codebase is disabled below with
+# the reason, because a noisy analyser gets switched off and an analyser that
+# is switched off catches nothing.
+
+Checks: >
+  bugprone-*,
+  cert-*,
+  concurrency-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-braces-around-statements,
+  -readability-redundant-inline-specifier,
+  -readability-avoid-nested-conditional-operator,
+  -cert-dcl21-cpp,
+  -performance-enum-size,
+  -readability-avoid-const-params-in-decls,
+  -readability-uppercase-literal-suffix,
+  -readability-redundant-lambda-parameter-list
+
+# Notes on the exclusions above, in order:
+#
+#   easily-swappable-parameters   Error::make(kind, reason, context) has
+#                                 adjacent parameters of related types by
+#                                 design; the type system already rejects a
+#                                 reason from the wrong domain.
+#   include-cleaner               Wants every transitively-used header named
+#                                 directly. Reasonable in principle, but it
+#                                 fights the BDE convention of grouping
+#                                 includes by package with hand-written
+#                                 comment headers.
+#   identifier-length             BDE uses short, conventional names: 'd_' for
+#                                 members, 't_' for template parameters.
+#   magic-numbers                 Bit masks and shifts in a packed value are
+#                                 clearer as literals beside the layout
+#                                 comment than as named constants elsewhere.
+#   braces-around-statements      Already settled by .clang-format.
+#   redundant-inline-specifier    BDE writes 'inline' on out-of-class inline
+#                                 definitions deliberately, as documentation.
+#   performance-enum-size         Actively wrong here. The reason enums MUST
+#                                 have a uint16_t underlying type: the
+#                                 ErrorReasonType concept requires it, and the
+#                                 packed layout allocates them 16 bits.
+#                                 Shrinking to uint8_t would break both.
+#   avoid-const-params-in-decls   True, but the project writes 'const' on
+#                                 parameters in declarations as documentation
+#                                 of intent, consistently.
+#   uppercase-literal-suffix      Taste. Note that 'bugprone-signed-bitwise'
+#                                 stays on and catches the case that actually
+#                                 matters: an unsuffixed literal used as a
+#                                 shift operand is signed.
+#   redundant-lambda-parameter-*  C++23 permits '[] -> T {}', but empty parens
+#                                 in a lambda are near-universal convention
+#                                 and read better.
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: 'gamegine/(include|src)/.*'
+
+FormatStyle: file

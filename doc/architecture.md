@@ -21,8 +21,49 @@ This file is the single source of truth for the platform contract, memory budget
 | **D6b** | **Visibility target topology.** Arises only if D6 says yes; shared 64-bit atomic target is the default, separate-attachment merge the fallback | Deferred by design |
 | **D7** | **Every sizing number derives from what a capability claim requires as proof.** 1 GiB normal pool; Zorah as the committed corpus at two densities — 9.5 GiB demo at 9:1, 48.6 GiB full scene at 48:1 | Taken |
 | **D8** | **Geometry from the Zorah export; materials from a separate UV- and tangent-equipped fixture.** A procedural generator is optional work, priced separately | Taken |
+| **D9** | **Errors are values.** Every fallible operation returns `std::expected`; the host code neither throws nor catches, and builds with `-fno-exceptions` | Taken |
 
 **Deferred by design is not undecided.** D6 and D6b have one decision point (the R2 histogram), one default (do not build it; publish the measurement) and nothing downstream blocking on them — the engine is correct and complete with a single hardware raster path. They are reopened at R2 and nowhere else.
+
+### D9 — errors are values
+
+Every fallible operation returns `std::expected<T, core::Error>`. First-party
+code does not throw, does not catch, and compiles with `-fno-exceptions`.
+
+**Why.** The paths that matter most here are the ones where an exception is
+least welcome. Streaming publishes and evicts pages while readers are live;
+the cooker runs against a measured memory limit (D4); page decode sits in the
+frame. In each, a failure is an expected outcome with a recovery — reject the
+page, fall back to the parent LOD, retry the read — not an exceptional one.
+Errors-as-values puts that recovery in the signature where a reviewer can see
+it, and `-fno-exceptions` makes "I forgot to handle it" a compile error rather
+than a stack unwind through a half-published page table.
+
+**Verified before adoption**, because `-fno-exceptions` is only worth having
+if the dependencies allow it:
+
+| Dependency | Position |
+| --- | --- |
+| `fastgltf` | Ships its own `Expected<T>`; its single `raise()` is guarded on `__cpp_exceptions` and falls back to `abort()` |
+| `meshoptimizer`, `clusterlod.h` | C API, no exceptions |
+| GoogleTest | Builds with `GTEST_HAS_EXCEPTIONS=0`; only `EXPECT_THROW` is lost, which this project has no use for |
+
+**Consequences, accepted deliberately.**
+
+*A constructor cannot return a value.* Any type whose construction can fail
+exposes a static factory returning `std::expected`, and keeps its constructor
+private and non-failing. This applies to most of `platform/` and every RHI
+resource.
+
+*Allocation failure terminates.* Under `-fno-exceptions` a `std::bad_alloc`
+becomes `abort()` rather than an unwind. For an engine whose budgets are hard
+caps (D7) and whose admission is against a measured limit (D4), terminating on
+an allocation nobody budgeted for is the honest outcome; the alternative is
+unwinding into a state the memory accounting no longer describes.
+
+*Errors carry no heap.* `core::Error` is a code, a static message and a source
+location. It allocates nothing, so returning one is safe on the paths that are
+failing precisely because memory is short.
 
 ### D0 — what this project is for
 

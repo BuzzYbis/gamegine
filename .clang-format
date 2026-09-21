@@ -86,15 +86,15 @@ AlignAfterOpenBracket: Align
 # The old sources column-align runs of member declarations and their
 # initialisers ('double   d_elapsedTime = 0.0;'), per block, not across
 # blank lines.
-AlignConsecutiveAssignments: Consecutive
-AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
 AlignTrailingComments: true
 SpacesBeforeTrailingComments: 2
 SpaceAfterCStyleCast: false
 
 # Include order is expressed by hand with '// std', '// core', '// rhi'
 # comment headers, so clang-format must not reshuffle the blocks.
-SortIncludes: Never
+SortIncludes: false
 IncludeBlocks: Preserve
 
 SeparateDefinitionBlocks: Leave

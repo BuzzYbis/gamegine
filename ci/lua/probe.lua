@@ -14,6 +14,15 @@
 -- and the exact command that failed. It is never omitted, never defaulted and
 -- never filled in from a spec sheet.
 
+-- Every probe is bounded. A probe that can block forever can hang a nightly
+-- job forever, and ci.md section 2 requires jobs to be interruptible and to
+-- clean up. This is not hypothetical: 'glxinfo -B' blocks indefinitely when
+-- no display server answers, which is the normal state of a headless runner.
+--
+-- Ten seconds is far longer than any probe here legitimately needs; it exists
+-- to turn a hang into a reported UNAVAILABLE, not to race a slow machine.
+local DEFAULT_TIMEOUT_MS = 10000
+
 -- Return the first line of a possibly multi-line string, trimmed.
 function _firstline(text)
     if not text then
@@ -52,20 +61,24 @@ end
 --               only the first line.
 -- opt.accept    a table of exit codes to treat as success, default {0}.
 --               Some tools report a version and exit non-zero.
+-- opt.timeout   milliseconds before the child is killed, default 10000.
 --
--- Never raises: a missing program or a non-zero exit becomes UNAVAILABLE.
+-- Never raises and never blocks indefinitely: a missing program, a non-zero
+-- exit, or a timeout all become UNAVAILABLE with the reason.
 function run(program, argv, opt)
     opt = opt or {}
     argv = argv or {}
     local source = command_string(program, argv)
 
+    local timeout = opt.timeout or DEFAULT_TIMEOUT_MS
     local outfile, errfile = os.tmpfile(), os.tmpfile()
     local code
     try
     {
         function ()
             code = os.execv(program, argv,
-                            {stdout = outfile, stderr = errfile, try = true})
+                            {stdout = outfile, stderr = errfile, try = true,
+                             timeout = timeout})
         end,
         catch
         {
@@ -82,6 +95,12 @@ function run(program, argv, opt)
 
     if code == nil then
         return unavailable("program not found or not executable", source)
+    end
+
+    -- os.execv returns -1 when it killed the child at the timeout.
+    if code == -1 then
+        return unavailable(
+            ("timed out after %dms and was killed"):format(timeout), source)
     end
 
     local accepted = false
@@ -136,7 +155,7 @@ function match(program, argv, pattern, opt)
 end
 
 -- Read a file and return its trimmed first line as a record.
-function readfile(path, description)
+function readfile(path)
     if not os.isfile(path) then
         return unavailable("file does not exist", path)
     end

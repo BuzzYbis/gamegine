@@ -409,6 +409,7 @@ task("ci-check")
         -- behind a compile.
         local steps = {
             {name = "format", task = "ci-format"},
+            {name = "lua",    task = "ci-lua"},
             {name = "tests",  task = "ci-test"},
             -- B0.4 is a release-gate condition, so the local push tier
             -- reports unfilled pins rather than failing on them.
@@ -478,6 +479,7 @@ task("ci-inventory")
         -- exists so a workflow can print 'nothing to check yet, and here is
         -- what makes this real' rather than reporting a green tick.
         local cpp     = sources.list()
+        local units   = sources.translation_units()
         local shaders = os.files(path.join(os.projectdir(), "shaders",
                                            "**.slang"))
         local bundles = os.dirs(path.join(os.projectdir(), "results", "*"))
@@ -506,6 +508,7 @@ task("ci-inventory")
             schema_version   = 1,
             checked_at_utc   = os.date("!%Y-%m-%dT%H:%M:%SZ"),
             cpp_sources      = #cpp,
+            translation_units = #units,
             slang_shaders    = #shaders,
             result_bundles   = #bundles,
             pins_complete    = (#unpinned == 0),
@@ -516,7 +519,8 @@ task("ci-inventory")
 
         cprint("${bright}CI inventory${clear}  (what exists, and what does "
                .. "not)")
-        cprint("  first-party C++ sources   %d", inventory.cpp_sources)
+        cprint("  first-party C++ sources   %d  (%d translation units)",
+               inventory.cpp_sources, inventory.translation_units)
         cprint("  Slang shaders             %d", inventory.slang_shaders)
         cprint("  result bundles            %d", inventory.result_bundles)
         cprint("  pins complete             %s%s",
@@ -544,7 +548,12 @@ task("ci-inventory")
                 local lines = {
                     ("cpp_sources=%d"):format(inventory.cpp_sources),
                     ("slang_shaders=%d"):format(inventory.slang_shaders),
-                    ("has_cpp=%s"):format(tostring(inventory.cpp_sources > 0)),
+                    -- The build job keys off translation units: a static
+                    -- library with only headers cannot be archived.
+                    ("has_cpp=%s")
+                        :format(tostring(inventory.translation_units > 0)),
+                    ("has_headers=%s")
+                        :format(tostring(inventory.cpp_sources > 0)),
                     ("has_shaders=%s")
                         :format(tostring(inventory.slang_shaders > 0)),
                     ("pins_complete=%s")
@@ -575,7 +584,9 @@ task("ci-test")
         -- These guard parsers and validators that run on machines nobody is
         -- watching. They need no GPU and no engine, so they run in the cloud
         -- push tier alongside the other cheap checks.
-        local suites = {"powermetrics_test", "jsonschema_test"}
+        local suites = {"probe_test", "powermetrics_test",
+                        "jsonschema_test", "machine_test",
+                        "bench_test"}
 
         local total, failed = 0, 0
         for _, name in ipairs(suites) do
@@ -605,5 +616,191 @@ task("ci-test")
             raise("%d of %d checks failed", failed, total)
         end
         cprint("${color.success}%d checks passed", total)
+    end)
+task_end()
+
+-- ---------------------------------------------------------------- bench ---
+
+task("bench")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake bench --tier=T1 --out=results/ci/<rev>",
+        description = "Run a benchmark tier and emit a result bundle.",
+        options = {
+            {'o', "out",     "kv", nil, "Bundle output directory."},
+            {'t', "tier",    "kv", nil, "T1 nightly, T2 weekly, T3 gate."},
+            {'b', "backend", "kv", nil, "vulkan, metal, cpu-reference, "
+                                        .. "indexed-oracle."},
+            {'p', "profile", "kv", nil, "Profile id, L or A."},
+            {'m', "mode",    "kv", nil, "warm, engine-cold, storage-cold."},
+            {'s', "scene",   "kv", nil, "Fixture id. Default: all."},
+            {nil, "all-fixtures", "k", nil, "Run every registered fixture."},
+            {nil, "runs",    "kv", nil, "Override the tier's run count."},
+            {nil, "no-power", "k", nil, "Skip the powermetrics capture."},
+        }
+    }
+    on_run(function ()
+        import("core.base.option")
+        import("bench", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local out = option.get("out")
+        if not out then
+            raise("no --out given; a run must say where its bundle goes")
+        end
+
+        -- The manifest records the actual command (benchmarks.md section 6),
+        -- so it is reconstructed here rather than guessed at read time.
+        local parts = {"xmake bench"}
+        for _, name in ipairs({"out", "tier", "backend", "profile", "mode",
+                               "scene", "runs"}) do
+            local v = option.get(name)
+            if v then
+                table.insert(parts, ("--%s=%s"):format(name, tostring(v)))
+            end
+        end
+
+        local dir, report, ok, manifest = bench.run({
+            out        = out,
+            tier       = option.get("tier"),
+            backend    = option.get("backend"),
+            profile    = option.get("profile"),
+            mode       = option.get("mode"),
+            scene      = option.get("scene"),
+            runs       = option.get("runs") and tonumber(option.get("runs")),
+            skip_power = option.get("no-power"),
+            command    = table.concat(parts, " "),
+        })
+
+        cprint("${bright}%s / %s${clear}  status=%s", manifest.benchmark,
+               manifest.tier, manifest.status)
+        cprint("  bundle           %s", dir)
+        cprint("  machine role     %s", manifest.machine_role)
+        cprint("  evidence         %s",
+               manifest.evidence_eligible and "eligible"
+               or "${color.warning}NOT eligible (mock run)${clear}")
+        if manifest.status_reason then
+            cprint("${dim}  %s", manifest.status_reason)
+        end
+
+        for _, f in ipairs(report.findings or {}) do
+            local colour = f.severity == "error" and "${color.error}"
+                           or "${color.warning}"
+            cprint(colour .. "  %-8s${clear} %s", f.severity, f.message)
+        end
+
+        if not ok then
+            raise("the harness emitted a bundle that does not validate; "
+                  .. "this is a harness bug, not a run failure")
+        end
+        cprint("${color.success}bundle validates against the frozen schema")
+    end)
+task_end()
+
+-- --------------------------------------------------------------- ci-lua ---
+
+task("ci-lua")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-lua",
+        description = "Check the CI Lua for dead code (the -Wunused of the "
+                      .. "scripting side).",
+        options = {}
+    }
+    on_run(function ()
+        import("lualint", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local findings, count = lualint.check()
+        if #findings == 0 then
+            cprint("${color.success}%d Lua file(s) clean", count)
+            return
+        end
+        for _, f in ipairs(findings) do
+            cprint("${color.error}%s:%d${clear} %s", f.file, f.line,
+                   f.message)
+        end
+        raise("%d finding(s) in %d Lua file(s)", #findings, count)
+    end)
+task_end()
+
+-- -------------------------------------------------------------- ci-tidy ---
+
+task("ci-tidy")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-tidy",
+        description = "Static analysis of first-party C++ (clang-tidy).",
+        options = {
+            {nil, "fix", "k", nil, "Apply clang-tidy's suggested fixes."},
+        }
+    }
+    on_run(function ()
+        import("core.base.option")
+        import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        -- Homebrew keeps clang-tidy out of PATH because it would shadow
+        -- Apple's clang; look there before giving up.
+        local candidates = {
+            "clang-tidy",
+            "/opt/homebrew/opt/llvm/bin/clang-tidy",
+            "/usr/local/opt/llvm/bin/clang-tidy",
+        }
+        local tidy
+        for _, c in ipairs(candidates) do
+            if probe.run(c, {"--version"}).status == "OK" then
+                tidy = c
+                break
+            end
+        end
+        if not tidy then
+            raise("clang-tidy not found. Tried: %s",
+                  table.concat(candidates, ", "))
+        end
+
+        -- clang-tidy needs the real compile flags; xmake keeps
+        -- compile_commands.json up to date at the project root.
+        local database = path.join(os.projectdir(), "compile_commands.json")
+        if not os.isfile(database) then
+            raise("compile_commands.json is missing; run 'xmake build' first")
+        end
+
+        local units = sources.translation_units()
+        if #units == 0 then
+            cprint("${color.warning}no first-party translation units yet; "
+                   .. "nothing to analyse")
+            return
+        end
+
+        local failed = 0
+        for _, unit in ipairs(units) do
+            local relative = path.relative(unit, os.projectdir())
+            local argv = {"--config-file="
+                          .. path.join(os.projectdir(), ".clang-tidy"),
+                          "-p", os.projectdir(), "--quiet"}
+            if option.get("fix") then
+                table.insert(argv, "--fix")
+            end
+            table.insert(argv, unit)
+
+            local record = probe.run(tidy, argv,
+                                     {lines = true, stream = "both",
+                                      timeout = 300000})
+            if record.status == "OK" then
+                cprint("${color.success}ok${clear}   %s", relative)
+            else
+                failed = failed + 1
+                cprint("${color.error}FAIL${clear} %s", relative)
+                for line in tostring(record.reason or ""):gmatch("[^\n]+") do
+                    if line:find("error:") or line:find("warning:") then
+                        cprint("${dim}       %s", line)
+                    end
+                end
+            end
+        end
+
+        if failed > 0 then
+            raise("%d translation unit(s) have findings", failed)
+        end
+        cprint("${color.success}%d translation unit(s) clean", #units)
     end)
 task_end()

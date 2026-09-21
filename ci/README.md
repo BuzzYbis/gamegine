@@ -26,6 +26,9 @@ runs before pushing.
 | `xmake ci-bundle` | Validates a result bundle's layout | — |
 | `xmake ci-inventory` | Reports which CI inputs exist yet, and which do not | — |
 | `xmake ci-test` | Runs the CI tooling's own tests | — |
+| `xmake bench` | Runs a benchmark tier and emits a result bundle | **bench/** |
+| `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
+| `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
 
 ```bash
 xmake ci-check                              # before pushing
@@ -43,6 +46,7 @@ ci/
 ├── README.md                this file
 ├── pins.json                pinned and recorded inputs        (ci.md §6)
 ├── machines.json            which machine is which, and what its results are worth
+├── fixtures.json            the fixture corpus and its build state
 ├── tasks.lua                xmake task definitions
 ├── lua/
 │   ├── probe.lua            run commands, report honestly
@@ -50,6 +54,7 @@ ci/
 │   ├── pins.lua             pin verification                     (B0.4)
 │   ├── jsonschema.lua       a small JSON Schema subset
 │   ├── bundle.lua           result-bundle layout         (benchmarks.md §6)
+│   ├── bench.lua            the vg_bench harness
 │   └── sources.lua          which files are ours to police
 └── schema/
     ├── run-manifest.schema.json      the frozen manifest contract
@@ -133,6 +138,91 @@ it predates does not link.
 Both are pinned to the **same commit** and are bumped **together**. A bump of
 either is a content format change: full re-cook, new package hashes, named new
 baseline.
+
+---
+
+## The warning policy, both languages
+
+C++ builds with `-Wall -Wextra -Wunused -Werror` and is analysed by
+`clang-tidy`. The Lua that drives CI had no equivalent, so `ci-lua` closes
+that gap. It reports three classes:
+
+- **Unused parameters, imports and file-scope constants.** The `-Wunused` of
+  the scripting side.
+- **Calls to globals xmake's sandbox does not provide.** `next`, `select`,
+  `pcall`, `load` and friends exist in plain Lua and are absent here. Every
+  entry on that list was discovered the same way: at run time, in a branch
+  that had not executed yet. `next` hid inside the schema validator until a
+  manifest containing an empty array reached it.
+
+It strips comments before matching, so commented-out code is not reported —
+a checker that cries wolf gets disabled, and a disabled checker catches
+nothing.
+
+`.luarc.json` declares the sandbox's globals for the language server. Without
+it, every `import`, `try`, `raise` and `path` is flagged as undefined and the
+real findings drown.
+
+### clang-tidy
+
+`.clang-tidy` enables the defect-hunting families and disables checks that
+fire on correct, idiomatic code here — each with the reason, in the file.
+Two are worth knowing:
+
+- `performance-enum-size` is **actively wrong** for `Error`: the reason enums
+  must have a `uint16_t` underlying type, because the concept requires it and
+  the packed layout allocates them 16 bits.
+- `bugprone-macro-parentheses` fires on `GAMEGINE_ERROR_TRY_ASSIGN`, where the
+  argument is a whole declaration and `(auto window) = ...` is not valid C++.
+  Suppressed for that macro alone, not globally.
+
+---
+
+## The benchmark harness
+
+```bash
+xmake bench --tier=T1 --out=results/ci/$(git rev-parse --short HEAD)
+```
+
+This is the **R0 skeleton**. It does everything a run does *except measure*,
+because there is no engine to measure yet: it resolves the fixtures, fills the
+manifest from the pinned versions and the machine, lays out the bundle, and
+reports every fixture `NOT_RUN` **with the reason it could not run**.
+
+Standing it up now is the point. The bundle layout and the manifest schema are
+contracts frozen at R0, and every later result is compared against R0's — so
+the thing that writes them wants to exist before the numbers do, not after,
+when the shape is already load-bearing.
+
+It also makes the second half of gate **B0.4** real. `ci-pins` proves the
+versions are pinned; the harness proves they are *recorded in every manifest*,
+which is what the gate actually asks for.
+
+### Where the JSON lives
+
+Bundle assembly is in `bench.lua`, not in the eventual `vg_bench` binary.
+There is **one** implementation of the manifest; two that can disagree is how
+a schema stops describing its own output. When there is an engine, the binary
+measures and hands back its samples — this still assembles the bundle.
+
+### Absent is not zero
+
+Every unmeasured statistic is `null`, never `0`. A p95 of `0 ms` is a
+measurement; a p95 of `null` is the absence of one, and the difference matters
+to every later comparison. A harness that writes zeros produces bundles that
+compare cleanly against real ones and are silently wrong. `ci-test` asserts
+this.
+
+### Fixtures
+
+`fixtures.json` registers the corpus. A fixture whose `build.status` is not
+`built` is reported `NOT_RUN` with its reason carried into the manifest — it
+is never silently omitted, because a fixture that quietly stops being listed
+is a fixture that regresses unnoticed.
+
+At R0 both S0 and S1 are `not_built`, so a run's fixture table doubles as the
+remaining R0 content to-do list, stated in the evidence rather than in
+someone's head.
 
 ---
 
