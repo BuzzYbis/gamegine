@@ -19,7 +19,8 @@ runs before pushing.
 | Task | Does | Gate |
 | --- | --- | --- |
 | `xmake ci-check` | The whole push tier, in the runner's order | — |
-| `xmake ci-format` | Checks first-party sources against `.clang-format`. `--fix` rewrites them | — |
+| `xmake format` | Formats first-party sources: clang-format, then the BDE pass. Run before pushing. Overrides xmake's built-in `format` plugin | — |
+| `xmake ci-format` | Checks the same, without rewriting: `.clang-format`, then the BDE rules clang-format cannot keep (`// RETURN`, `// IMPLICIT`, banners). `--fix` rewrites them | — |
 | `xmake ci-pins` | Verifies `pins.json` against the machine | **B0.4** |
 | `xmake ci-machine` | Captures this runner's machine manifest | — |
 | `xmake ci-schema` | Validates JSON documents against a schema | — |
@@ -30,13 +31,19 @@ runs before pushing.
 | `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
 | `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
 | `xmake ci-style` | Previews the output palette in your terminal | — |
+| `xmake ci-unit` | Builds and runs the C++ unit tests | — |
+| `xmake ci-coverage` | Line, function and branch coverage of `gamegine/` | — |
+| `xmake ci-coverage-html` | Per-line annotated HTML report, in `build/coverage/html/` | — |
 
 ```bash
 xmake ci-check                              # before pushing
-xmake ci-format --fix                       # after writing code
+xmake format                                # before pushing: clang-format + BDE pass
 xmake ci-machine -o results/B0-A/machine.json
 xmake ci-bundle results/B0-A                # before calling a gate green
 ```
+
+The full list of what to run and check before a commit is
+[doc/commit-checklist.md](../doc/commit-checklist.md).
 
 ---
 
@@ -58,6 +65,9 @@ ci/
 │   ├── bench.lua            the vg_bench harness
 │   ├── sources.lua          which files are ours to police
 │   ├── lualint.lua          dead code and sandbox traps
+│   ├── formatter.lua        clang-format, then the BDE pass
+│   ├── bdestyle.lua         the BDE rules clang-format cannot keep
+│   ├── coverage.lua         source-based coverage of gamegine/
 │   ├── style.lua            output readable on any background
 │   └── testing.lua          assertions for the Lua tests
 ├── meta/
@@ -237,6 +247,41 @@ With that, clangd wants **zero** edits to a file `ci-format` considers clean.
 The general rule: if the editor and `xmake ci-format` disagree, they are
 running different libFormat versions. `ci-format` is the authority — it is
 what the runner uses.
+
+**Some BDE rules are not clang-format's to keep** (rule numbers from
+`doc/CodingStandards(fromBDE_almost).pdf`):
+
+| Rule | What | Pass behaviour |
+| --- | --- | --- |
+| 11.6 | `// RETURN` on every return other than at the closing brace, right-justified to column 79, at least two spaces after the statement | aligned; with no room, moved to a line of its own (11.6.3), and back up once there is room |
+| 7.4.2 | `// IMPLICIT` on a deliberately implicit constructor | placed exactly like `// RETURN` |
+| 6.1.3, 6.8.3 | class banners indented 25 spaces when the name is under 20 characters, centred otherwise; rules as long as the title | re-indented, rules re-cut |
+| 4.5.1 | `INLINE DEFINITIONS` banner to column 79, its `I` in column 29 | rebuilt |
+
+Every option that might preserve these — `AlignTrailingComments: Kind:
+Leave`, `CommentPragmas`, `ReflowComments: Never` — was tried against
+clang-format 23 and Apple's 21. None keeps the tag columns in either, not
+even for a tag on its own line, nor the banner indentation in 23.
+
+So `xmake format` and `xmake ci-format` run clang-format **and then**
+`ci/lua/bdestyle.lua` (both through `ci/lua/formatter.lua`), which puts
+them back; the pair is idempotent.
+
+**The workflow, in any editor:** let the editor's clangd format on save as
+usual — it will pull tags and banners out of place while you work, which is
+harmless — and run
+
+```sh
+xmake format        # before pushing
+```
+
+`xmake format` is this project's own task: it overrides xmake's built-in
+`format` plugin, which runs clang-format alone and would undo the pass. It
+is the same as `xmake ci-format --fix`. `ci-check` and CI run the check
+form, so a push that skipped it fails on formatting rather than slipping
+through.
+
+The pass places the tags that are there; it does not add a *missing* one.
 
 ---
 

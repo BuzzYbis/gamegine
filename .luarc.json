@@ -110,7 +110,11 @@
     "lualint",
     "find_tool",
     "remove_files",
-    "set_showmenu"
+    "set_showmenu",
+    "coverage",
+    "style",
+    "bdestyle",
+    "formatter"
   ],
   "diagnostics.disable": [
     "lowercase-global"

@@ -141,13 +141,13 @@ function check_file(file)
 
         -- Calls to globals the sandbox does not provide. A definition of
         -- the same name in this file shadows the global and is fine.
-        for _, name in ipairs(SANDBOX_ABSENT) do
-            if line:find("%f[%w_]" .. name .. "%s*%(")
-               and not line:find("function%s+" .. name)
-               and not text:find("function%s+" .. name .. "%s*%(") then
+        for _, absent in ipairs(SANDBOX_ABSENT) do
+            if line:find("%f[%w_]" .. absent .. "%s*%(")
+               and not line:find("function%s+" .. absent)
+               and not text:find("function%s+" .. absent .. "%s*%(") then
                 table.insert(findings, _finding(relative, i,
                     ("calls %q, which xmake's Lua sandbox does not provide; "
-                     .. "it will be nil at run time"):format(name)))
+                     .. "it will be nil at run time"):format(absent)))
             end
         end
 
