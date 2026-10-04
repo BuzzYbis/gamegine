@@ -74,9 +74,9 @@
 namespace engine::core {
 namespace error {
 
-// ========================
-// struct ErrorReasonTraits
-// ========================
+                         // ========================
+                         // struct ErrorReasonTraits
+                         // ========================
 
 /// This traits type associates a reason enumeration with the domain it
 /// belongs to: each specialization defines [k_DOMAIN]. It must be specialized
@@ -94,9 +94,9 @@ concept ErrorReasonType = std::is_scoped_enum_v<t_REASON> && requires {
     ErrorReasonTraits<t_REASON>::k_DOMAIN;
 };
 
-// ===========
-// class Error
-// ===========
+                         // ===========
+                         // class Error
+                         // ===========
 
 /// This value-semantic type packs an error into 64 bits: a domain, a kind, a
 /// domain-specific reason and a 32-bit context (see the component
@@ -244,9 +244,9 @@ class [[nodiscard("An error shall not be discarded")]] Error final {
     friend constexpr bool operator==(Error lhs, Error rhs) noexcept = default;
 };
 
-// ---------------------------------
-// ErrorReasonTraits specializations
-// ---------------------------------
+                     // ---------------------------------
+                     // ErrorReasonTraits specializations
+                     // ---------------------------------
 
 /// Associate [Error::CoreReason] with the [e_CORE] error domain.
 template <> struct ErrorReasonTraits<Error::CoreReason> {
@@ -278,9 +278,9 @@ static_assert(std::is_trivially_destructible_v<Error>);
 //                          INLINE DEFINITIONS
 // ============================================================================
 
-// -----------
-// class Error
-// -----------
+                         // -----------
+                         // class Error
+                         // -----------
 
 // PRIVATE CREATORS
 
@@ -369,9 +369,9 @@ constexpr std::uint64_t Error::raw() const noexcept
     return d_raw;
 }
 
-// --------------
-// FREE FUNCTIONS
-// --------------
+                         // --------------
+                         // FREE FUNCTIONS
+                         // --------------
 
 inline constexpr std::unexpected<Error>
 make_unexpected(const Error error) noexcept

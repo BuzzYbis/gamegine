@@ -46,9 +46,9 @@
 namespace engine::core {
 namespace error {
 
-// =======================
-// struct ErrorReasonNames
-// =======================
+                         // =======================
+                         // struct ErrorReasonNames
+                         // =======================
 
 /// This traits type holds the names of the enumerators of [t_REASON]: each
 /// specialization defines [k_NAMES], one name per enumerator, in enumerator
@@ -61,9 +61,9 @@ template <class t_REASON>
 concept NamedErrorReason = ErrorReasonType<t_REASON> &&
                            requires { ErrorReasonNames<t_REASON>::k_NAMES; };
 
-// --------------------------------
-// ErrorReasonNames specializations
-// --------------------------------
+                      // --------------------------------
+                      // ErrorReasonNames specializations
+                      // --------------------------------
 
 /// Name the enumerators of [Error::CoreReason].
 template <> struct ErrorReasonNames<Error::CoreReason> {
@@ -94,9 +94,9 @@ static_assert(ErrorReasonNames<Error::VulkanReason>::k_NAMES.size() ==
 static_assert(ErrorReasonNames<Error::MetalReason>::k_NAMES.size() ==
               std::to_underlying(Error::MetalReason::e_COUNT));
 
-// ==================
-// class ErrorCatalog
-// ==================
+                         // ==================
+                         // class ErrorCatalog
+                         // ==================
 
 /// This utility class names each part of an [Error]. A value that no
 /// enumerator has is named ["?"].
@@ -156,9 +156,9 @@ class ErrorCatalog final {
     to_string_reason_of(const Error error) noexcept;
 };
 
-// =====================
-// class ErrorDescriptor
-// =====================
+                         // =====================
+                         // class ErrorDescriptor
+                         // =====================
 
 /// This value-semantic class holds the three names of an error: its domain,
 /// kind and reason. The names view static strings, so a descriptor is cheap
@@ -225,9 +225,9 @@ class ErrorDescriptor final {
 //                          INLINE DEFINITIONS
 // ============================================================================
 
-// ------------------
-// class ErrorCatalog
-// ------------------
+                         // ------------------
+                         // class ErrorCatalog
+                         // ------------------
 
 // PRIVATE CLASS METHODS
 
@@ -268,16 +268,16 @@ ErrorCatalog::to_string_reason_of(const Error error) noexcept
 {
     switch (error.domain()) {
     case Error::Domain::e_UNKNOWN:
-    case Error::Domain::e_COUNT: return k_UNNAMED;  // RETURN
+    case Error::Domain::e_COUNT: return k_UNNAMED;                    // RETURN
     case Error::Domain::e_CORE:
         return to_string_reason(error.reason_as<Error::CoreReason>());
-        // RETURN
+                                                                      // RETURN
     case Error::Domain::e_VULKAN:
         return to_string_reason(error.reason_as<Error::VulkanReason>());
-        // RETURN
+                                                                      // RETURN
     case Error::Domain::e_METAL:
         return to_string_reason(error.reason_as<Error::MetalReason>());
-        // RETURN
+                                                                      // RETURN
     }
 
     // Not dead code, although every enumerator has a case above: the domain
@@ -289,9 +289,9 @@ ErrorCatalog::to_string_reason_of(const Error error) noexcept
     return k_UNNAMED;
 }
 
-// ---------------------
-// class ErrorDescriptor
-// ---------------------
+                         // ---------------------
+                         // class ErrorDescriptor
+                         // ---------------------
 
 // PRIVATE CREATORS
 

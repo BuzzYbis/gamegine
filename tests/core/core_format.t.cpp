@@ -11,7 +11,8 @@
 // into the logger's output batch, so its promises are checked at the edges:
 //
 //: o Nothing past the buffer. Guard bytes around a window catch an
-//:   off-by-one in either direction.
+//:   off-by-one in either direction, and a whole word 'append_continued'
+//:   copies across the buffer's end.
 //:
 //: o Truncation is reported, and stays reported: 'is_truncated' is asked
 //:   once, at the end of a line.
@@ -21,7 +22,7 @@
 //:
 //: o 'append_continued' agrees with a byte-by-byte reference on awkward
 //:   input, with control characters at every position of an eight-byte
-//:   word, so its word-at-a-time scan can never drift from the simple one.
+//:   word, so its word-at-a-time copy can never drift from the simple one.
 
 #include <engine/core/core_format.h>
 
@@ -473,7 +474,7 @@ TEST(CoreFormatLineWriter, ContinuedAgreesWithTheReference)
 
 TEST(CoreFormatLineWriter, ContinuedAgreesAtEveryPositionInAWord)
 {
-    // The scan tests eight bytes at a time. Put each control character at
+    // The copy checks eight bytes at a time. Put each control character at
     // every position of texts up to three words long, among the bytes a
     // word test could get wrong: a space or a '~' right after a control
     // character (flagged by a borrow), and bytes above 0x7f.
@@ -535,6 +536,42 @@ TEST(CoreFormatLineWriter, ContinuedTextIsCutLikeAnythingElse)
 
     EXPECT_TRUE(writer.is_truncated());
     EXPECT_EQ(writer.view(), "abc\n    ");
+}
+
+/// Expect 'append_continued' of 'text' into a buffer of 'size' bytes to write
+/// the reference, cut at the buffer's end, and nothing outside the buffer.
+void expect_continued_inside(const std::string& text, const std::size_t size)
+{
+    std::string           storage(size + 2, k_poison);
+    const std::span<char> window = std::span(storage).subspan(1, size);
+    LineWriter            writer(window);
+    writer.append_continued(text, 3);
+
+    const std::string expected = reference_continued(text, 3);
+    EXPECT_EQ(writer.view(), std::string_view(expected).substr(0, size));
+    EXPECT_EQ(writer.is_truncated(), expected.size() > size);
+    EXPECT_EQ(storage.front(), k_poison);
+    EXPECT_EQ(storage.back(), k_poison);
+}
+
+TEST(CoreFormatLineWriter, ContinuedWordsStayInsideTheBuffer)
+{
+    // The copy stores whole words and may leave scratch past 'size()', but
+    // never past the buffer: buffers of every size up to five words, with a
+    // control character at every position of the text, or none.
+    for (std::size_t size = 0; size <= 40; ++size) {
+        for (std::size_t at = 0; at <= 24; ++at) {
+            for (const char control : {'\n', '\x7f'}) {
+                std::string text(24, 'a');
+                if (at < text.size()) {
+                    text[at] = control;
+                }
+                SCOPED_TRACE("size " + std::to_string(size) + ", control at " +
+                             std::to_string(at));
+                expect_continued_inside(text, size);
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------- parsers -----

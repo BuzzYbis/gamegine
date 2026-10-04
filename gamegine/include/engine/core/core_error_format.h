@@ -55,9 +55,9 @@
 namespace engine::core {
 namespace error {
 
-// ==================
-// struct ErrorFormat
-// ==================
+                         // ==================
+                         // struct ErrorFormat
+                         // ==================
 
 /// This utility [struct] writes an [Error] as a line of text; see the
 /// component documentation for the layout.
@@ -108,9 +108,9 @@ struct ErrorFormat {
 }  // close namespace error
 }  // close namespace engine::core
 
-// ======================================
-// struct std::formatter<ErrorDescriptor>
-// ======================================
+                   // ======================================
+                   // struct std::formatter<ErrorDescriptor>
+                   // ======================================
 
 /// This [std::formatter] specialization writes an [ErrorDescriptor] as its
 /// three names, [domain | kind | reason]. It accepts [{}] only.
@@ -146,9 +146,9 @@ struct std::formatter<engine::core::error::ErrorDescriptor, char>
            t_CONTEXT&                                  context) const;
 };
 
-// ============================
-// struct std::formatter<Error>
-// ============================
+                        // ============================
+                        // struct std::formatter<Error>
+                        // ============================
 
 /// This [std::formatter] specialization writes an [Error] as its line. It
 /// accepts [{}], and [{:#}] to end the line with the raw value.
@@ -190,9 +190,9 @@ struct std::formatter<engine::core::error::Error, char>
 namespace engine::core {
 namespace error {
 
-// ------------------
-// struct ErrorFormat
-// ------------------
+                         // ------------------
+                         // struct ErrorFormat
+                         // ------------------
 
 // CLASS METHODS
 
@@ -238,9 +238,9 @@ inline std::size_t ErrorFormat::format_line(const std::span<char> buffer,
 }  // close namespace error
 }  // close namespace engine::core
 
-// --------------------------------------
-// struct std::formatter<ErrorDescriptor>
-// --------------------------------------
+                   // --------------------------------------
+                   // struct std::formatter<ErrorDescriptor>
+                   // --------------------------------------
 
 // ACCESSORS
 
@@ -258,9 +258,9 @@ std::formatter<engine::core::error::ErrorDescriptor, char>::format(
     return std::ranges::copy(writer.view(), context.out()).out;
 }
 
-// ----------------------------
-// struct std::formatter<Error>
-// ----------------------------
+                        // ----------------------------
+                        // struct std::formatter<Error>
+                        // ----------------------------
 
 // ACCESSORS
 

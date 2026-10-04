@@ -17,8 +17,10 @@
 //@DESCRIPTION: [LineWriter] appends text into a buffer its caller owns. It
 // never writes past the buffer, never allocates, never fails, and writes no
 // terminating NUL: an append that does not fit is cut at the buffer's end,
-// and [is_truncated] says so once, at the end of the line. Numbers go
-// through [std::to_chars]: no locale, no allocation, no format string.
+// and [is_truncated] says so once, at the end of the line. The buffer past
+// [size()] is scratch: [append_continued] copies whole words and may leave
+// a few characters there. Numbers go through [std::to_chars]: no locale, no
+// allocation, no format string.
 //
 // [EmptySpecParser] and [AlternateFlagParser] are bases for [std::formatter]
 // specializations. They reject every other format specification through
@@ -65,9 +67,9 @@ namespace format {
 /// [constexpr], and by aborting at run time, since exceptions are off.
 [[noreturn]] void reject_format_spec() noexcept;
 
-// ================
-// class LineWriter
-// ================
+                         // ================
+                         // class LineWriter
+                         // ================
 
 /// This mechanism appends text to a buffer it does not own. Whatever does
 /// not fit is cut at the buffer's end, and the writer remembers it was (see
@@ -82,12 +84,21 @@ class LineWriter final {
 
     // PRIVATE CLASS METHODS
 
-    /// Return the position of the first control character of the specified
-    /// [text], a byte below [0x20] or [0x7f], or [text.size()] if it has
-    /// none.
-    static std::size_t find_control(const std::string_view text) noexcept;
+    /// Copy the specified [text] to the specified [out] up to its first
+    /// control character, a byte below [0x20] or [0x7f], and return that
+    /// character's position, or [text.size()] if it has none. The behavior
+    /// is undefined unless [text] fits in [out]. Note that [out] past the
+    /// returned position may be overwritten.
+    static std::size_t copy_plain(const std::span<char>  out,
+                                  const std::string_view text) noexcept;
 
     // PRIVATE MANIPULATORS
+
+    /// Append the specified [text] up to its first control character, cut
+    /// at the buffer's end, and return that character's position, or
+    /// [text.size()] if it has none or the buffer ran out. Note that the
+    /// buffer past [size()] may be overwritten.
+    std::size_t append_plain(const std::string_view text) noexcept;
 
     /// Append the specified number of [copies] of the specified character
     /// [c], cut at the buffer's end.
@@ -117,7 +128,8 @@ class LineWriter final {
     /// each line after the first with the specified [column] spaces so that
     /// it continues under the message. Drop one trailing newline, read
     /// ["\r\n"] as a newline, and write any other control character (below
-    /// [0x20], or [0x7f]) as ['?'].
+    /// [0x20], or [0x7f]) as ['?']. Note that the buffer past [size()] may
+    /// be overwritten.
     void append_continued(const std::string_view text,
                           const std::size_t      column) noexcept;
 
@@ -175,9 +187,9 @@ class LineWriter final {
     [[nodiscard]] std::string_view view() const noexcept;
 };
 
-// ======================
-// struct EmptySpecParser
-// ======================
+                         // ======================
+                         // struct EmptySpecParser
+                         // ======================
 
 /// This base of a [std::formatter] specialization accepts the empty format
 /// specification, [{}], and nothing else.
@@ -209,9 +221,9 @@ struct EmptySpecParser {
     //! EmptySpecParser& operator=(const EmptySpecParser& rhs) = default;
 };
 
-// =========================
-// class AlternateFlagParser
-// =========================
+                         // =========================
+                         // class AlternateFlagParser
+                         // =========================
 
 /// This base of a [std::formatter] specialization accepts [{}] and the
 /// alternate form [{:#}], and remembers which one it parsed.
@@ -267,14 +279,14 @@ inline void reject_format_spec() noexcept
     std::abort();
 }
 
-// ----------------
-// class LineWriter
-// ----------------
+                         // ----------------
+                         // class LineWriter
+                         // ----------------
 
 // PRIVATE CLASS METHODS
 
-inline std::size_t
-LineWriter::find_control(const std::string_view text) noexcept
+inline std::size_t LineWriter::copy_plain(const std::span<char>  out,
+                                          const std::string_view text) noexcept
 {
     static_assert(std::endian::native == std::endian::little,
                   "the first character must be the lowest byte of a word");
@@ -302,13 +314,17 @@ LineWriter::find_control(const std::string_view text) noexcept
         return (x - limit) & ~x & k_HIGHS;
     };
 
-    // Check a word, [k_WORD_SIZE] (8) bytes, at a time.
+    // Copy a word, [k_WORD_SIZE] (8) bytes, then check it: one pass, 18-44%
+    // faster at -O3 on multi-line text than checking a run, then copying it
+    // with [memcpy]. Bytes copied past a control character are scratch: the
+    // returned position leaves them out.
     constexpr std::size_t k_WORD_SIZE = sizeof(std::uint64_t);
 
     std::size_t position = 0;
     for (; text.size() - position >= k_WORD_SIZE; position += k_WORD_SIZE) {
         std::uint64_t word = 0;
         std::memcpy(&word, text.data() + position, k_WORD_SIZE);
+        std::memcpy(out.data() + position, &word, k_WORD_SIZE);
 
         // Flag control characters: bytes below space, and DEL bytes.
         const std::uint64_t flagged = below(word, k_SPACES) |
@@ -317,24 +333,45 @@ LineWriter::find_control(const std::string_view text) noexcept
             // Lowest flag = bit 7 of the first control character's byte
             // (little-endian): [countr_zero] / CHAR_BIT is that byte.
             const int byte = std::countr_zero(flagged) / CHAR_BIT;
-            return position + static_cast<std::size_t>(byte);  // RETURN
+            return position + static_cast<std::size_t>(byte);         // RETURN
         }
     }
 
-    // Last 0 to 7 bytes, one by one. A 4-2-1 cascade measured only ~0.3 ns
-    // faster at -O3 (noise), for two more paths that must pad with spaces:
-    // a zero byte counts as a control character.
+    // Last 0 to 7 bytes, one by one. An overlapping last word measured no
+    // better at -O3 (faster with GCC, slower with clang), and a 4-2-1 cascade
+    // needs two more paths that must pad with spaces: a zero byte counts as
+    // a control character.
     for (; position < text.size(); ++position) {
         const auto c = static_cast<unsigned char>(text[position]);
         if (c < k_SPACE || c == k_DEL) {
-            return position;  // RETURN
+            return position;                                          // RETURN
         }
+        out[position] = text[position];
     }
 
     return text.size();
 }
 
 // PRIVATE MANIPULATORS
+
+inline std::size_t
+LineWriter::append_plain(const std::string_view text) noexcept
+{
+    // Only the part of [text] that fits in the buffer is copied.
+    const std::string_view fitting = text.substr(0, d_buffer.size() - d_size);
+    const std::size_t control = copy_plain(d_buffer.subspan(d_size), fitting);
+    d_size += control;
+    if (control < fitting.size()) {
+        return control;                                               // RETURN
+    }
+
+    // No control character in what fits: [text] ended, or the buffer did,
+    // and then the rest is cut, whatever it holds.
+    if (fitting.size() < text.size()) {
+        d_truncated = true;
+    }
+    return text.size();
+}
 
 inline void LineWriter::append_repeated(const char        c,
                                         const std::size_t copies) noexcept
@@ -390,13 +427,12 @@ inline void LineWriter::append_continued(const std::string_view text,
         rest.remove_suffix(1);
     }
 
-    // Each pass copies the plain run up to the next control character in one
-    // [append], then handles that one character.
+    // Each pass copies the plain run up to the next control character, then
+    // handles that one character.
     while (!rest.empty()) {
-        const std::size_t control = find_control(rest);
-        append(rest.substr(0, control));
+        const std::size_t control = append_plain(rest);
         if (control == rest.size()) {
-            return;  // RETURN
+            return;                                                   // RETURN
         }
 
         // [rest] now starts with the control character. In a CRLF the CR is
@@ -520,9 +556,9 @@ inline std::string_view LineWriter::view() const noexcept
     return std::string_view(d_buffer.data(), d_size);
 }
 
-// ----------------------
-// struct EmptySpecParser
-// ----------------------
+                         // ----------------------
+                         // struct EmptySpecParser
+                         // ----------------------
 
 // CLASS METHODS
 
@@ -538,9 +574,9 @@ EmptySpecParser::parse(std::format_parse_context& context)
     return it;
 }
 
-// -------------------------
-// class AlternateFlagParser
-// -------------------------
+                         // -------------------------
+                         // class AlternateFlagParser
+                         // -------------------------
 
 // MANIPULATORS
 

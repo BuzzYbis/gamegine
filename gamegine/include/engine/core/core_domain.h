@@ -10,7 +10,8 @@
 //@CLASSES:
 //  engine::core::Domain: subsystem an error or a log message comes from
 //
-//@SEE_ALSO: core_error, core_error_catalog
+//@SEE_ALSO: core_error, core_error_catalog, core_log_message,
+//           core_log_message_catalog
 //
 //@DESCRIPTION: This component provides [Domain], the 8-bit enumeration of
 // the subsystems an error or a log message can come from, and
