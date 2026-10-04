@@ -15,6 +15,7 @@ C++23 engine with native Vulkan 1.4 on Linux/NVIDIA and native Metal 4 on Apple 
 | [roadmap.md](roadmap.md) | Capacity, schedule, descope ladder, kill criteria, decision calendar | Planning, or when a date slips |
 | [benchmarks.md](benchmarks.md) | Protocol, correctness definitions Q0–Q6, fixture corpus, evidence format | Designing or running a measurement |
 | [ci.md](ci.md) | Job tiers, golden images, feature eligibility while Metal trails, runner hygiene | Setting up or debugging automation |
+| [commit-checklist.md](commit-checklist.md) | What to run and check before a commit | Before every commit |
 | [math.pdf](math.pdf) / [math.typ](math.typ) | The mathematics the engine depends on being correct | Implementing anything with a formula in it |
 | [references.md](references.md) | 74 sources, each placed at the point it becomes load-bearing, with a reading depth | Before starting a release, or when stuck |
 | [milestones/](milestones/) | Per-release working sheets, ten files | At the start of a release, and kept open through it |
