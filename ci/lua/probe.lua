@@ -83,7 +83,7 @@ function run(program, argv, opt)
         end,
         catch
         {
-            function (errors)
+            function (_)
                 code = nil
             end
         }

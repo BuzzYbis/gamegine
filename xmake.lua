@@ -10,7 +10,14 @@ set_version("0.1.0")
 set_description("A Game Engine using Vulkan and C++23")
 
 set_languages("cxx23")
-add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
+
+-- 'lsp = "clangd"' keeps third-party headers (gtest, the Vulkan SDK,
+-- fastgltf...) as '-isystem' in compile_commands.json, as the build uses
+-- them. Without it xmake writes them as '-I', for editors that cannot read
+-- '-isystem', and clang-tidy then reports gtest's own macros -- every
+-- EXPECT_DEATH -- as findings in our tests. clangd reads '-isystem'.
+add_rules("plugin.compile_commands.autoupdate",
+          {outputdir = ".", lsp = "clangd"})
 
 add_rules("mode.debug", "mode.release")
 
@@ -89,7 +96,7 @@ rule("gamegine.warnings")
             -- Enforce strict ISO C++ compliance and reject non-standard extensions.
             "-Wpedantic",
             -- Warn when a variable shadows another variable in an outer scope.
-            "-Wshadow",  
+            "-Wshadow",
             -- Warn if a class with virtual functions lacks a virtual destructor.
             "-Wnon-virtual-dtor",
             -- Warn on C-style casts in C++.
@@ -97,7 +104,7 @@ rule("gamegine.warnings")
             -- Warn when pointer casting increases required memory alignment.
             "-Wcast-align",
             -- Warn on unused variables, functions, parameters, or expressions.
-            "-Wunused", 
+            "-Wunused",
             -- Warn when a function hides a virtual function from a base class.
             "-Woverloaded-virtual",
             -- Warn on implicit type conversions that may alter values or lose precision.
@@ -321,7 +328,7 @@ target("imgui")
 -- declare add_deps("sample-models").
 
 rule("gamegine.sample_models")
-    before_build(function (target)
+    before_build(function (_)
         import("lib.detect.find_tool")
 
         -- Archives to fetch: <file name> = <direct download url>

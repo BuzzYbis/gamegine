@@ -13,6 +13,7 @@
 --   xmake ci-schema      validate a JSON document
 --   xmake ci-bundle      validate a result bundle layout
 --   xmake ci-format      check, or fix, source formatting
+--   xmake format         fix source formatting (overrides xmake's plugin)
 --   xmake ci-check       run the whole push tier locally
 
 -- ------------------------------------------------------------ ci-machine ---
@@ -330,7 +331,8 @@ task("ci-format")
     set_category("plugin")
     set_menu {
         usage       = "xmake ci-format [--fix]",
-        description = "Check first-party sources against .clang-format.",
+        description = "Check first-party sources against .clang-format "
+                      .. "and the BDE rules it cannot express.",
         options = {
             {nil, "fix", "k", nil, "Rewrite files in place instead of "
                                    .. "reporting them."},
@@ -341,6 +343,10 @@ task("ci-format")
         import("core.base.option")
         import("probe", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        -- clang-format, then the BDE pass for the rules clang-format cannot
+        -- keep. The editor's format-on-save runs clang-format alone and
+        -- undoes those; this puts them back before a push.
+        import("formatter", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
         local version = probe.match("clang-format", {"--version"},
                                     "version%s+([%d%.]+)")
@@ -355,32 +361,26 @@ task("ci-format")
             return
         end
 
-        -- Not named 'style': that is the output module imported above, and
-        -- a local of the same name shadows it for the rest of the function.
-        local style_arg = "file:"
-                          .. path.join(os.projectdir(), ".clang-format")
         local fix = option.get("fix")
         local offenders = {}
 
         for _, f in ipairs(files) do
-            if fix then
-                os.execv("clang-format", {"-i", "--style=" .. style_arg, f})
-            else
-                local formatted = os.tmpfile()
-                local code = os.execv("clang-format", {"--style=" .. style_arg, f},
-                                      {stdout = formatted, try = true})
-                if code == 0 then
-                    if io.readfile(formatted) ~= io.readfile(f) then
-                        table.insert(offenders, f)
-                    end
+            local original = io.readfile(f)
+            local text, reason = formatter.format_text(original, f)
+            if text == nil then
+                raise("%s: %s", path.relative(f, os.projectdir()), reason)
+            elseif text ~= original then
+                if fix then
+                    io.writefile(f, text)
+                else
+                    table.insert(offenders, f)
                 end
-                os.tryrm(formatted)
             end
         end
 
         if fix then
-            style.say("${ok}formatted %d file(s) with clang-format %s",
-                   #files, version.value)
+            style.say("${ok}formatted %d file(s): clang-format %s, then the "
+                   .. "BDE pass", #files, version.value)
             return
         end
 
@@ -390,10 +390,30 @@ task("ci-format")
                        path.relative(f, os.projectdir()))
             end
             raise("%d of %d file(s) are not formatted; run "
-                  .. "'xmake ci-format --fix'", #offenders, #files)
+                  .. "'xmake format'", #offenders, #files)
         end
         style.say("${ok}%d file(s) formatted correctly "
                .. "(clang-format %s)", #files, version.value)
+    end)
+task_end()
+
+-- ---------------------------------------------------------------- format ---
+
+-- Overrides xmake's built-in 'format' plugin, which runs clang-format ALONE
+-- and would undo the BDE tags and banners just before a push. A project
+-- task of the same name takes precedence (checked on xmake 3.1.1), so the
+-- obvious command does the right thing.
+task("format")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake format",
+        description = "Format first-party sources: clang-format, then the "
+                      .. "BDE pass. Same as 'xmake ci-format --fix'.",
+        options = {}
+    }
+    on_run(function ()
+        import("core.base.task")
+        task.run("ci-format", {fix = true})
     end)
 task_end()
 
@@ -496,7 +516,7 @@ task("ci-inventory")
                                            "**.slang"))
         local bundles = os.dirs(path.join(os.projectdir(), "results", "*"))
 
-        local report, pins_ok = pins.verify({allow_unpinned = true})
+        local report = pins.verify({allow_unpinned = true})
         local unpinned = {}
         for _, e in ipairs(report.pinned) do
             if e.status == "UNPINNED" then
@@ -599,7 +619,7 @@ task("ci-test")
         -- push tier alongside the other cheap checks.
         local suites = {"probe_test", "powermetrics_test",
                         "jsonschema_test", "machine_test",
-                        "bench_test"}
+                        "bench_test", "bdestyle_test"}
 
         local total, failed = 0, 0
         for _, name in ipairs(suites) do
@@ -937,7 +957,7 @@ task("ci-unit")
         for line in record.value:gmatch("[^\n]+") do
             local n = line:match("^%[%s*PASSED%s*%]%s+(%d+) test")
             if n then
-                passed = tonumber(n)
+                passed = tonumber(n) or passed
             end
             local name = line:match("^%[%s*FAILED%s*%]%s+([%w_]+%.[%w_]+)")
             if name then
@@ -976,5 +996,70 @@ task("ci-unit")
 
         style.say("${ok}%d test(s) passed${reset}%s", passed,
                   suites and ("   ${dim}(" .. suites .. ")${reset}") or "")
+    end)
+task_end()
+
+-- ---------------------------------------------------------- ci-coverage ---
+
+task("ci-coverage")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-coverage",
+        description = "Measure line, function and branch coverage of "
+                      .. "gamegine/ by the unit tests.",
+        options = {}
+    }
+    on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("coverage",
+               {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local context, reason = coverage.measure()
+        if not context then
+            -- Coverage that could not be measured is not a number.
+            style.say("${warn}coverage UNAVAILABLE${reset}  %s", reason)
+            raise("coverage could not be measured")
+        end
+
+        local table_text, err = coverage.report(context)
+        if not table_text then
+            raise("llvm-cov report failed: %s", err or "")
+        end
+        style.say("${bold}coverage of gamegine/ by the unit tests${reset}")
+        print(table_text)
+        style.say("${dim}Lines that ran, not results that were checked. "
+                  .. "'xmake ci-coverage-html' shows which lines.${reset}")
+    end)
+task_end()
+
+-- ----------------------------------------------------- ci-coverage-html ---
+
+task("ci-coverage-html")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-coverage-html",
+        description = "Write the llvm-cov HTML report, annotated per line "
+                      .. "and per branch.",
+        options = {}
+    }
+    on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("coverage",
+               {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local context, reason = coverage.measure()
+        if not context then
+            style.say("${warn}coverage UNAVAILABLE${reset}  %s", reason)
+            raise("coverage could not be measured")
+        end
+
+        local index, err = coverage.html(context)
+        if not index then
+            raise("llvm-cov show failed: %s", err or "")
+        end
+        style.say("${ok}HTML coverage report written${reset}")
+        style.say("  %s", path.relative(index, os.projectdir()))
+        style.say("${dim}  open it with:  open %s${reset}",
+                  path.relative(index, os.projectdir()))
     end)
 task_end()
