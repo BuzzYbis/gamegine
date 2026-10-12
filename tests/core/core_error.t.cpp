@@ -83,14 +83,33 @@ TEST(CoreError, IsExactlySixtyFourBits)
 
 TEST(CoreError, PacksEveryFieldWithoutCollision)
 {
-    const Error error = Error::make(Error::Kind::e_UNKNOWN,
-                                    Error::CoreReason::e_UNKNOWN,
-                                    0x0150A3B2u);
+    // Every field at a value whose bits differ from its neighbours'. An
+    // enumeration takes any value of its underlying type, so a kind and a
+    // reason that no enumerator names still pack; with the only enumerator
+    // there is (0), a wrong shift or mask could not show.
+    const Error error = Error::make(static_cast<Error::Kind>(0xA5),
+                                    static_cast<Error::VulkanReason>(0xBEEF),
+                                    0xDEADC0DEu);
 
-    EXPECT_EQ(error.domain(), Error::Domain::e_CORE);
-    EXPECT_EQ(error.kind(), Error::Kind::e_UNKNOWN);
-    EXPECT_EQ(error.reason(), 0u);
-    EXPECT_EQ(error.context(), 0x0150A3B2u);
+    EXPECT_EQ(error.raw(),
+              0xDEADC0DE'BEEF'A5'02ull);  // context reason kind domain
+    EXPECT_EQ(error.domain(), Error::Domain::e_VULKAN);
+    EXPECT_EQ(error.kind(), static_cast<Error::Kind>(0xA5));
+    EXPECT_EQ(error.reason(), 0xBEEFu);
+    EXPECT_EQ(error.context(), 0xDEADC0DEu);
+}
+
+TEST(CoreError, ReadsEachFieldFromItsOwnBits)
+{
+    // The other direction: a raw value whose every byte differs, read
+    // through each accessor. A domain no enumerator names comes back as is.
+    const Error error = Error::from_raw(0x01234567'89AB'CD'EFull);
+
+    EXPECT_EQ(error.domain(), static_cast<Error::Domain>(0xEF));
+    EXPECT_EQ(error.kind(), static_cast<Error::Kind>(0xCD));
+    EXPECT_EQ(error.reason(), 0x89ABu);
+    EXPECT_EQ(error.context(), 0x01234567u);
+    EXPECT_EQ(error.signed_context(), 0x01234567);
 }
 
 TEST(CoreError, ContextOccupiesTheTopThirtyTwoBitsOnly)
@@ -294,13 +313,16 @@ TEST(CoreErrorDeathTest, ReasonAsRejectsAReasonFromAnotherDomain)
     // the wrong table. The assert in 'reason_as' is the only thing that
     // catches it, so this proves it fires.
     //
-    // EXPECT_DEBUG_DEATH, not EXPECT_DEATH: release builds define NDEBUG,
-    // which compiles the assert out. There the statement just runs, and the
-    // test passes without claiming a guarantee the build does not provide.
+    // Release builds define NDEBUG, which compiles the assert out, so there
+    // the test is reported as skipped, not as passed.
+#ifdef NDEBUG
+    GTEST_SKIP() << "assert() is compiled out of this build: this test checks "
+                    "nothing here, and runs in a debug build";
+#endif
     const Error vulkan = Error::make(Error::Kind::e_UNKNOWN,
                                      Error::VulkanReason::e_UNKNOWN);
 
-    EXPECT_DEBUG_DEATH((void)vulkan.reason_as<Error::CoreReason>(), "");
+    EXPECT_DEATH((void)vulkan.reason_as<Error::CoreReason>(), "");
 }
 
 }  // namespace

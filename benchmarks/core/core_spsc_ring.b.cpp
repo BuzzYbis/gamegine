@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 BuzzY_ & Rether
+//
+// core_spsc_ring.b.cpp                                               -*-C++-*-
+
+//@PURPOSE: Measure how many values per second 'SpscRing' sustains.
+//
+//@DESCRIPTION: Every log call pushes into one of these rings on the thread
+// that logs, and the logger thread pops from all of them. Three things are
+// measured, at three sizes of value (8 bytes, like an 'Error'; 16, the log
+// record; 64) in the ring of 4096 slots a thread logs into:
+//
+//: o 'PushPopPair': one thread pushes a value and pops it. The cost of the
+//:   calls alone, nothing contended.
+//:
+//: o 'FillThenDrain': one thread pushes 4096 values, then pops 4096. The
+//:   same, with the ring filling and emptying as a batch drain does.
+//:
+//: o 'Transfer': a producer thread pushes and this one pops, both spinning,
+//:   so that the ring is as busy as it gets and each value crosses between
+//:   two cores. The sustained rate of a ring that is never idle; the real
+//:   ring idles between drains. Run for a producer pushing single values and
+//:   one pushing batches of 8, and for each placement of the two threads
+//:   that the platform can ask for.
+//
+// Each benchmark reports 'items_per_second', the values that went through the
+// ring, each pushed once and popped once, and 'ops', the pushes plus the pops
+// (twice as many). Build with the release flags ('-O3 -DNDEBUG') and run
+// with repetitions, for a median:
+// ```
+//  xmake f -m release && xmake build benchmarks
+//  xmake run benchmarks --benchmark_repetitions=5
+// ```
+// ('--benchmark_report_aggregates_only=true' keeps just the median and the
+// mean.)
+//
+// On macOS the two threads are placed by asking for a quality of service,
+// which only biases the choice of core, and the OS does not say where a
+// thread ran: the label says what was asked for ('asked P + E'), not what
+// happened. Each iteration of a 'Transfer' starts the producer thread and
+// joins it, inside the timed region; that costs tens of microseconds in
+// about 25 milliseconds. Every benchmark checks that the values came back
+// right, and skips itself with an error if they did not. TODO(Profile L): pin
+// the threads to chosen cores with 'pthread_setaffinity_np' (both on P-cores,
+// one on each kind, both on E-cores, and both on one core's two threads), and
+// measure at the same time how far apart in bytes two counters must be (see
+// 'k_CACHE_LINE_SIZE').
+
+#include <engine/core/core_spsc_ring.h>
+
+#include <benchmark/benchmark.h>
+
+#include <array>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <thread>
+
+#ifdef __APPLE__
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
+
+namespace {
+
+using engine::core::spsc::SpscRing;
+
+/// The slots a thread logs into.
+constexpr std::size_t k_CAPACITY = 4096;
+
+/// Values moved by one iteration of a 'Transfer' benchmark.
+constexpr std::uint64_t k_TRANSFERRED = std::uint64_t{1} << 20U;
+
+/// A trivially copyable value of 't_WORDS' 64-bit words.
+template <std::size_t t_WORDS> struct Item {
+    std::array<std::uint64_t, t_WORDS> words;
+};
+
+/// Return the item made from the specified 'value'.
+template <class t_ITEM> t_ITEM make_item(const std::uint64_t value)
+{
+    t_ITEM item{};
+    for (std::size_t i = 0; i < item.words.size(); ++i) {
+        item.words[i] = value + i;
+    }
+    return item;
+}
+
+/// Enumeration used to choose the kind of core a thread asks to run on.
+enum class Core : std::uint8_t {
+    e_PERFORMANCE,  // a fast core
+    e_EFFICIENCY,   // a slow, low-power core
+};
+
+/// Ask the OS to run the calling thread on the specified 'core' kind, as far
+/// as the platform lets a thread say so: a quality of service on macOS,
+/// nothing elsewhere.
+void prefer(const Core core)
+{
+#ifdef __APPLE__
+    (void)pthread_set_qos_class_self_np(core == Core::e_PERFORMANCE
+                                            ? QOS_CLASS_USER_INTERACTIVE
+                                            : QOS_CLASS_BACKGROUND,
+                                        0);
+#else
+    (void)core;
+#endif
+}
+
+/// Where the producer and the consumer thread of a 'Transfer' run.
+struct Placement {
+    Core        producer;
+    Core        consumer;
+    const char* label;
+};
+
+constexpr std::array<Placement, 3> k_PLACEMENTS = {
+    Placement{Core::e_PERFORMANCE, Core::e_PERFORMANCE, "asked P + P"},
+    Placement{Core::e_PERFORMANCE, Core::e_EFFICIENCY, "asked P + E"},
+    Placement{Core::e_EFFICIENCY, Core::e_EFFICIENCY, "asked E + E"},
+};
+
+/// Make the specified 'benchmark' run for each placement the platform can
+/// ask for: all of them on macOS, the default one elsewhere.
+void for_each_placement(benchmark::Benchmark* benchmark)
+{
+    benchmark->Arg(0);
+#ifdef __APPLE__
+    benchmark->Arg(1)->Arg(2);
+#endif
+}
+
+/// Return the number of iterations 'state' has run, as an unsigned number.
+std::uint64_t iterations_of(const benchmark::State& state)
+{
+    return static_cast<std::uint64_t>(state.iterations());
+}
+
+/// Report the specified 'values' that went through the ring in 'state': each
+/// was pushed once and popped once.
+void report(benchmark::State& state, const std::uint64_t values)
+{
+    state.SetItemsProcessed(static_cast<std::int64_t>(values));
+    state.counters["ops"] = benchmark::Counter(static_cast<double>(2 * values),
+                                               benchmark::Counter::kIsRate);
+}
+
+// ---------------------------------------------------------- one thread -----
+
+template <class t_ITEM> void push_pop_pair(benchmark::State& state)
+{
+    prefer(Core::e_PERFORMANCE);
+    const auto ring = std::make_unique<SpscRing<t_ITEM, k_CAPACITY>>();
+
+    std::uint64_t value    = 0;
+    std::uint64_t checksum = 0;
+    for ([[maybe_unused]] const auto _ : state) {
+        t_ITEM item = make_item<t_ITEM>(value++);
+        benchmark::DoNotOptimize(item);
+        if (!ring->try_push(item)) {
+            state.SkipWithError("a push was refused");
+            return;
+        }
+        const std::optional<t_ITEM> popped = ring->try_pop();
+        if (!popped.has_value()) {
+            state.SkipWithError("a pop found nothing");
+            return;
+        }
+        checksum += popped->words[0];
+    }
+
+    // What came out must be what went in: the values 0, 1, 2, ... in turn.
+    const std::uint64_t count = iterations_of(state);
+    if (checksum != count * (count - 1) / 2) {
+        state.SkipWithError("a value came back wrong");
+        return;
+    }
+    report(state, count);
+}
+
+template <class t_ITEM> void fill_then_drain(benchmark::State& state)
+{
+    prefer(Core::e_PERFORMANCE);
+    const auto ring = std::make_unique<SpscRing<t_ITEM, k_CAPACITY>>();
+
+    t_ITEM        item     = make_item<t_ITEM>(1);
+    std::uint64_t checksum = 0;
+    for ([[maybe_unused]] const auto _ : state) {
+        benchmark::DoNotOptimize(item);
+        for (std::size_t i = 0; i < k_CAPACITY; ++i) {
+            if (!ring->try_push(item)) {
+                state.SkipWithError("a push was refused");
+                return;
+            }
+        }
+        for (std::size_t i = 0; i < k_CAPACITY; ++i) {
+            const std::optional<t_ITEM> popped = ring->try_pop();
+            if (!popped.has_value()) {
+                state.SkipWithError("a pop found nothing");
+                return;
+            }
+            checksum += popped->words[0];
+        }
+    }
+
+    // Every value pushed was a 1, and every one must have come back.
+    const std::uint64_t count = iterations_of(state) * k_CAPACITY;
+    if (checksum != count) {
+        state.SkipWithError("a value came back wrong");
+        return;
+    }
+    report(state, count);
+}
+
+// --------------------------------------------------------- two threads -----
+
+template <class t_ITEM, std::size_t t_BATCH>
+void transfer(benchmark::State& state)
+{
+    const Placement& placement =
+        k_PLACEMENTS[static_cast<std::size_t>(state.range(0))];
+    state.SetLabel(placement.label);
+    prefer(placement.consumer);
+
+    const auto ring = std::make_unique<SpscRing<t_ITEM, k_CAPACITY>>();
+
+    for ([[maybe_unused]] const auto _ : state) {
+        std::thread producer([&ring, &placement] {
+            prefer(placement.producer);
+            for (std::uint64_t next = 0; next < k_TRANSFERRED;
+                 next += t_BATCH) {
+                // Built once, then offered until the ring takes it.
+                std::array<t_ITEM, t_BATCH> batch;
+                for (std::size_t i = 0; i < t_BATCH; ++i) {
+                    batch[i] = make_item<t_ITEM>(next + i);
+                }
+                if constexpr (t_BATCH == 1) {
+                    while (!ring->try_push(batch[0])) {
+                    }
+                } else {
+                    while (!ring->try_push(std::span<const t_ITEM>(batch))) {
+                    }
+                }
+            }
+        });
+
+        std::uint64_t out_of_order = 0;
+        for (std::uint64_t received = 0; received < k_TRANSFERRED;) {
+            const std::optional<t_ITEM> item = ring->try_pop();
+            if (item.has_value()) {
+                out_of_order += (item->words[0] != received) ? 1U : 0U;
+                ++received;
+            }
+        }
+        producer.join();
+
+        // A rate means nothing if the values did not arrive: every one, once,
+        // in order, is checked on every iteration.
+        if (out_of_order != 0) {
+            state.SkipWithError("values were lost, repeated or reordered");
+            break;
+        }
+    }
+    report(state, iterations_of(state) * k_TRANSFERRED);
+    prefer(Core::e_PERFORMANCE);
+}
+
+BENCHMARK(push_pop_pair<Item<1>>)->Name("PushPopPair/8B");
+BENCHMARK(push_pop_pair<Item<2>>)->Name("PushPopPair/16B");
+BENCHMARK(push_pop_pair<Item<8>>)->Name("PushPopPair/64B");
+
+BENCHMARK(fill_then_drain<Item<1>>)->Name("FillThenDrain/8B");
+BENCHMARK(fill_then_drain<Item<2>>)->Name("FillThenDrain/16B");
+BENCHMARK(fill_then_drain<Item<8>>)->Name("FillThenDrain/64B");
+
+BENCHMARK(transfer<Item<1>, 1>)
+    ->Name("Transfer/8B")
+    ->Apply(for_each_placement)
+    ->UseRealTime();
+BENCHMARK(transfer<Item<2>, 1>)
+    ->Name("Transfer/16B")
+    ->Apply(for_each_placement)
+    ->UseRealTime();
+BENCHMARK(transfer<Item<8>, 1>)
+    ->Name("Transfer/64B")
+    ->Apply(for_each_placement)
+    ->UseRealTime();
+BENCHMARK(transfer<Item<2>, 8>)
+    ->Name("Transfer/16B/batch of 8")
+    ->Apply(for_each_placement)
+    ->UseRealTime();
+
+}  // close unnamed namespace

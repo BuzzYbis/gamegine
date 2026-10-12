@@ -95,12 +95,28 @@ TEST(CoreLogMessage, IsExactlySixtyFourBits)
 
 TEST(CoreLogMessage, PacksEveryFieldWithoutCollision)
 {
-    const LogMessage message = LogMessage::make(Probe::e_UNSIGNED,
-                                                0x0150A3B2U);
+    // An id above 1 ('e_HEX' is 3) and an argument whose every nibble
+    // differs: ids 0 and 1 would hide a wrong shift or mask.
+    const LogMessage message = LogMessage::make(Probe::e_HEX, 0xDEADC0DEU);
 
+    EXPECT_EQ(message.raw(),
+              0xDEADC0DE'0003'00'01ULL);  // argument id - domain
     EXPECT_EQ(message.domain(), Domain::e_CORE);
-    EXPECT_EQ(message.id(), 1U);
-    EXPECT_EQ(message.argument(), 0x0150A3B2U);
+    EXPECT_EQ(message.id(), 3U);
+    EXPECT_EQ(message.argument(), 0xDEADC0DEU);
+}
+
+TEST(CoreLogMessage, ReadsEachFieldFromItsOwnBits)
+{
+    // 'from_raw' takes any 64 bits, so every field can be given a value no
+    // enumerator has, and each accessor must find its own bits. The byte
+    // between the domain and the id belongs to no field.
+    const LogMessage message = LogMessage::from_raw(0x01234567'89AB'CD'EFULL);
+
+    EXPECT_EQ(message.domain(), static_cast<Domain>(0xEF));
+    EXPECT_EQ(message.id(), 0x89ABU);
+    EXPECT_EQ(message.argument(), 0x01234567U);
+    EXPECT_EQ(message.signed_argument(), 0x01234567);
 }
 
 TEST(CoreLogMessage, ArgumentOccupiesTheTopThirtyTwoBitsOnly)
@@ -285,13 +301,16 @@ TEST(CoreLogMessageDeathTest, IdAsRejectsAnIdFromAnotherDomain)
     // the wrong enumeration. The assert in 'id_as' is the only thing that
     // catches it, so this proves it fires.
     //
-    // EXPECT_DEBUG_DEATH, not EXPECT_DEATH: release builds define NDEBUG,
-    // which compiles the assert out. There the statement just runs, and the
-    // test passes without claiming a guarantee the build does not provide.
+    // Release builds define NDEBUG, which compiles the assert out, so there
+    // the test is reported as skipped, not as passed.
+#ifdef NDEBUG
+    GTEST_SKIP() << "assert() is compiled out of this build: this test checks "
+                    "nothing here, and runs in a debug build";
+#endif
     const LogMessage vulkan = LogMessage::make(
         LogMessage::VulkanMessage::e_UNKNOWN);
 
-    EXPECT_DEBUG_DEATH((void)vulkan.id_as<LogMessage::CoreMessage>(), "");
+    EXPECT_DEATH((void)vulkan.id_as<LogMessage::CoreMessage>(), "");
 }
 
 }  // close unnamed namespace
