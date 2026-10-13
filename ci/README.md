@@ -21,13 +21,16 @@ runs before pushing.
 | `xmake ci-check` | The whole push tier, in the runner's order | — |
 | `xmake format` | Formats first-party sources: clang-format, then the BDE pass. Run before pushing. Overrides xmake's built-in `format` plugin | — |
 | `xmake ci-format` | Checks the same, without rewriting: `.clang-format`, then the BDE rules clang-format cannot keep (`// RETURN`, `// IMPLICIT`, banners). `--fix` rewrites them | — |
+| `xmake ci-shaders` | Compiles every Slang kernel for this host's targets and reports each outcome. `--self-test` proves the toolchain on its fixtures | **B0.1**, **B0.2** |
+| `xmake ci-shader-hash` | Recomputes the shader hash from the compiled artifacts. `--stamp` writes it into a run manifest | — |
 | `xmake ci-pins` | Verifies `pins.json` against the machine | **B0.4** |
 | `xmake ci-machine` | Captures this runner's machine manifest | — |
 | `xmake ci-schema` | Validates JSON documents against a schema | — |
 | `xmake ci-bundle` | Validates a result bundle's layout | — |
 | `xmake ci-inventory` | Reports which CI inputs exist yet, and which do not | — |
 | `xmake ci-test` | Runs the CI tooling's own tests | — |
-| `xmake bench` | Runs a benchmark tier and emits a result bundle | **bench/** |
+| `xmake bench` | Runs a benchmark tier and emits a result bundle, with the vg_bench device probes (`--no-probes` skips them) | **bench/** |
+| `xmake ci-ratios` | Derives the per-workload Apple-to-Linux ratios from an Apple bundle and a Linux one, into `ratios.json` | **B0** |
 | `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
 | `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
 | `xmake ci-style` | Previews the output palette in your terminal | — |
@@ -38,6 +41,7 @@ runs before pushing.
 ```bash
 xmake ci-check                              # before pushing
 xmake format                                # before pushing: clang-format + BDE pass
+xmake ci-shaders                            # after writing a kernel
 xmake ci-machine -o results/B0-A/machine.json
 xmake ci-bundle results/B0-A                # before calling a gate green
 ```
@@ -63,6 +67,8 @@ ci/
 │   ├── jsonschema.lua       a small JSON Schema subset
 │   ├── bundle.lua           result-bundle layout         (benchmarks.md §6)
 │   ├── bench.lua            the vg_bench harness
+│   ├── ratios.lua           the Apple-to-Linux ratios of B0
+│   ├── shaders.lua          the Slang toolchain: compile, classify, hash (D3)
 │   ├── sources.lua          which files are ours to police
 │   ├── lualint.lua          dead code and sandbox traps
 │   ├── formatter.lua        clang-format, then the BDE pass
@@ -73,6 +79,8 @@ ci/
 ├── meta/
 │   └── xmake.lua            xmake API types for the language server
 ├── test/                    the Lua tests, run by 'xmake ci-test'
+│   └── fixtures/shaders/    kernels with a known outcome each, for
+│                            'ci-shaders --self-test'
 └── schema/
     ├── run-manifest.schema.json      the frozen manifest contract
     ├── machine-manifest.schema.json  the machine manifest contract
@@ -328,10 +336,41 @@ Two are worth knowing:
 xmake bench --tier=T1 --out=results/ci/$(git rev-parse --short HEAD)
 ```
 
-This is the **R0 skeleton**. It does everything a run does *except measure*,
-because there is no engine to measure yet: it resolves the fixtures, fills the
-manifest from the pinned versions and the machine, lays out the bundle, and
-reports every fixture `NOT_RUN` **with the reason it could not run**.
+This is the **R0 skeleton**. It does everything a run does *except measure a
+fixture*, because there is no engine to render one yet: it resolves the
+fixtures, fills the manifest from the pinned versions and the machine, lays out
+the bundle, and reports every fixture `NOT_RUN` **with the reason it could not
+run**.
+
+What it does measure is the **B0 device probes**. It runs the C++ harness
+`vg_bench` (build it first: `xmake build vg_bench`) on the backend asked for
+with `--backend`, else the platform's own: Metal on macOS, Vulkan elsewhere.
+vg_bench writes CSV into `samples/device-probes/`, and the bundle gains:
+
+- `device-probes.json`, the document B0's evidence names: the device, the
+  toolchain that built the shaders, and every probe with its status and the
+  values it derived. The raw samples stay in the CSV.
+- the manifest's `backend` and `shader_hash`, the hash recomputed from the
+  artifacts on disk. vg_bench has already checked each artifact against the
+  index's sha256 and failed any kernel whose bytes changed.
+
+Probes that cannot run -- vg_bench not built, no GPU, no shader build -- leave
+a `device-probes.json` whose status is `NOT_RUN` with the reason, so a bundle
+without probes never looks like one whose probes found nothing. `ci-test`
+passes `device_probes = false`: the tooling tests need no GPU.
+
+The gate's ratios come from two bundles, one per machine:
+
+```bash
+xmake ci-ratios --apple=results/B0-A --linux=results/B0-L
+```
+
+It writes `ratios.json` into both: per workload -- bandwidth, raster, decode,
+CPU preparation -- the probe value that measures it, its definition, both
+values and their ratio (Apple over Linux, on throughputs). A workload one side
+could not measure gets no ratio, with the reason, never a ratio against
+nothing; caveats name a side on the wrong backend, a side that is not
+evidence, or two sides that are the same device.
 
 Standing it up now is the point. The bundle layout and the manifest schema are
 contracts frozen at R0, and every later result is compared against R0's — so
@@ -344,10 +383,11 @@ which is what the gate actually asks for.
 
 ### Where the JSON lives
 
-Bundle assembly is in `bench.lua`, not in the eventual `vg_bench` binary.
-There is **one** implementation of the manifest; two that can disagree is how
-a schema stops describing its own output. When there is an engine, the binary
-measures and hands back its samples — this still assembles the bundle.
+Bundle assembly is in `bench.lua`, not in the `vg_bench` binary. There is
+**one** implementation of the manifest; two that can disagree is how a schema
+stops describing its own output. The binary measures and hands back its samples
+as CSV; this assembles the bundle, `device-probes.json` and `ratios.json`
+included.
 
 ### Absent is not zero
 
@@ -472,6 +512,40 @@ hostname that changes.
 
 ---
 
+## The shader toolchain
+
+`shaders.lua` is the one implementation of the Slang build (D3). The
+`gamegine.slang` rule in `xmake.lua` (`xmake build shaders`) and
+`xmake ci-shaders` both call it, so the artifact CI checked is the artifact
+the harness loads. CI uses the task rather than `xmake build`: any
+`add_requires` package that cannot be resolved blocks configuration for
+every target, and a hosted runner has no Vulkan loader to find.
+
+[shaders/README.md](../shaders/README.md) holds the rules a kernel follows.
+What CI enforces:
+
+| Check | How |
+| --- | --- |
+| Every entry point declares its capability profile | A `[shader]` function with no `[require(...)]` fails on every target |
+| The declaration is honest | `-restrictive-capability-check` on every target. A Metal-incompatible call in a kernel that declares `metal` fails the SPIR-V build on Linux too |
+| Baseline builds everywhere (B0.1) | Any non-`COMPILED` outcome for `baseline/` is a build error. On macOS a missing Metal toolchain fails the job, because an absent toolchain is never a pass |
+| Probes report (B0.2) | `UNSUPPORTED` only for Slang's 36107 or a rejection by Apple's `metal`/`metallib`, recorded with the command and diagnostics |
+| Escapes are exceptions | A hand-written `<kernel>.metal` must state its reason, must bind like the Slang kernel, and fails the build once Slang no longer needs it. More than one baseline escape is flagged (architecture.md §10) |
+| The classification is still right | `--self-test` compiles `test/fixtures/shaders`, whose kernels each carry an `//@expect` line, and checks every outcome plus build determinism. It runs on every push, before any real kernel exists |
+
+The pinned `slangc` is the build shipped with Vulkan SDK 1.4.341.0: upstream
+tags that commit `vulkan-sdk-1.4.341.0`, and no Slang release carries it. The
+push job installs that SDK and then runs `ci-pins` against it.
+
+`build/shaders/index.json` lists every kernel, per-target outcomes, the
+toolchain provenance, each kernel's bindings by name, and the shader hash per
+target. A harness finds the kernels there, and binds their buffers by name. `ci-shader-hash`
+recomputes the hash from the artifact bytes rather than trusting the index,
+and refuses to stamp a manifest when they disagree or when the set was not
+loadable.
+
+---
+
 ## Status vocabulary
 
 From [ci.md §4](../doc/ci.md). A run reports one of these per row, per
@@ -514,7 +588,7 @@ position, as reported by `xmake ci-inventory`:
 | Step | When | Delivers | State |
 | --- | --- | --- | --- |
 | 1 | R0, first | Self-hosted runners on both laptops; overnight schedule; cancel-on-developer-login | **pending** |
-| 2 | R0 | Push tier: host build, Slang both targets, capability check, CPU fixtures | **partial** — format, schema and pins are live; build and shader jobs are wired but have no inputs yet |
+| 2 | R0 | Push tier: host build, Slang both targets, capability check, CPU fixtures | **live, unproven on a runner** — format, schema, pins, the shader toolchain with its kernels, and the host build of the vg_bench skeleton are wired; none has run on GitHub's runners yet |
 | 3 | R0 | Golden-image harness, one trivial fixture, green on both machines | **pending** — *this is the R0 exit criterion* |
 | 4–7 | R1–R4 | Cooker determinism, cross-backend agreement, streaming fixtures, release archives | not started |
 

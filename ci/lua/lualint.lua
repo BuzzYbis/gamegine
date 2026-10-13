@@ -36,6 +36,22 @@ function _mentions(text, name)
            ~= nil
 end
 
+-- Whether 'line' calls the global 'name'. 'config.load()' or 'depend.load()'
+-- calls a module's function of that name, which the sandbox has no say in.
+function _calls_global(line, name)
+    local from = 1
+    while true do
+        local first, last = line:find("%f[%w_]" .. name .. "%s*%(", from)
+        if not first then
+            return false
+        end
+        if not line:sub(1, first - 1):find("[%.:]%s*$") then
+            return true
+        end
+        from = last + 1
+    end
+end
+
 -- Remove a trailing comment, tracking quotes so that a '--' inside a string
 -- is left alone. Without this the checker reports code that is commented out,
 -- and a checker that cries wolf gets disabled.
@@ -142,7 +158,7 @@ function check_file(file)
         -- Calls to globals the sandbox does not provide. A definition of
         -- the same name in this file shadows the global and is fine.
         for _, absent in ipairs(SANDBOX_ABSENT) do
-            if line:find("%f[%w_]" .. absent .. "%s*%(")
+            if _calls_global(line, absent)
                and not line:find("function%s+" .. absent)
                and not text:find("function%s+" .. absent .. "%s*%(") then
                 table.insert(findings, _finding(relative, i,

@@ -14,6 +14,8 @@
 --   xmake ci-bundle      validate a result bundle layout
 --   xmake ci-format      check, or fix, source formatting
 --   xmake format         fix source formatting (overrides xmake's plugin)
+--   xmake ci-shaders     compile every kernel     (gates B0.1, B0.2)
+--   xmake ci-shader-hash compute, or stamp, the shader hash
 --   xmake ci-check       run the whole push tier locally
 
 -- ------------------------------------------------------------ ci-machine ---
@@ -417,6 +419,373 @@ task("format")
     end)
 task_end()
 
+-- ------------------------------------------------------------ ci-shaders ---
+
+task("ci-shaders")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-shaders [options]",
+        description = "Compile every Slang kernel and report "
+                      .. "(gates B0.1, B0.2).",
+        options = {
+            {'t', "targets", "kv", nil, "Targets, comma-separated: spirv, "
+                                        .. "msl. Default: the configured "
+                                        .. "'shader-targets', else spirv on "
+                                        .. "Linux and msl on macOS."},
+            {'o', "output", "kv", nil, "Also write the index JSON here."},
+            {nil, "self-test", "k", nil, "Compile the fixtures in "
+                                         .. "ci/test/fixtures/shaders and "
+                                         .. "check every outcome against its "
+                                         .. "//@expect line, instead of "
+                                         .. "compiling shaders/."},
+        }
+    }
+    on_run(function ()
+        import("core.base.option")
+        import("core.project.config")
+        import("shaders", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        config.load()
+        local targets = shaders.parse_targets(
+            option.get("targets") or config.get("shader-targets"))
+        local tc = shaders.toolchain(targets)
+        shaders.require_toolchain(tc)
+
+        cprint("${bright}shader toolchain${clear}  targets: %s",
+               table.concat(targets, ", "))
+        cprint("  slangc     %s  %s", tc.slangc.value,
+               tc.slang_pin_matches and "${color.success}(pinned)"
+               or ("${color.warning}(pin is %s)"):format(tc.slang_pin))
+        if tc.metal then
+            if shaders.can_validate_msl(tc) then
+                cprint("  metal      %s, -std=%s, macOS >= %s", tc.metal.value,
+                       tc.msl_std, tc.macos_min)
+            else
+                cprint("${color.warning}  metal      UNAVAILABLE${clear}  %s",
+                       (tc.metal.reason or tc.metallib.reason))
+            end
+        end
+
+        -- The self-test proves the classification against real compiler
+        -- output. It exists because the rule that separates an unsupported
+        -- probe from a broken one reads diagnostic ids, and a Slang bump that
+        -- renumbers them would otherwise pass broken probes as unsupported
+        -- without anyone noticing.
+        if option.get("self-test") then
+            local root = path.join("ci", "test", "fixtures", "shaders")
+            local outdir = os.tmpfile() .. ".shaders"
+            local kernels = shaders.discover({root = root})
+            local failures, unchecked, checked = 0, 0, 0
+
+            cprint("${bright}self-test${clear}  %s", root)
+            for _, k in ipairs(kernels) do
+                local text = io.readfile(path.join(os.projectdir(),
+                                                   k.source))
+                local expect = {}
+                for t, s in (text:match("//@expect([^\n]*)") or "")
+                            :gmatch("(%w+)=(%u+)") do
+                    expect[t] = s
+                end
+                for _, t in ipairs(targets) do
+                    local r = shaders.compile(k, t, {toolchain = tc,
+                                                     outputdir = outdir})
+                    local want = expect[t]
+                    if not want then
+                        failures = failures + 1
+                        cprint("${color.error}  FAIL${clear} %-28s %-5s no "
+                               .. "//@expect for this target", k.name, t)
+                    elseif r.status == "UNVALIDATED" and want ~= "FAILED" then
+                        -- Only a macOS host can show what Apple's toolchain
+                        -- does with the MSL. Counted apart, never as a pass.
+                        unchecked = unchecked + 1
+                        cprint("${dim}  --   %-28s %-5s expects %s; not "
+                               .. "checkable on this host", k.name, t, want)
+                    elseif r.status == want and r.escape
+                           and r.status == "COMPILED"
+                           and not (r.slang_result and r.escape.reason) then
+                        -- An escape that compiled must still carry the
+                        -- rejected Slang attempt and its own reason.
+                        failures = failures + 1
+                        cprint("${color.error}  FAIL${clear} %-28s %-5s "
+                               .. "escaped, but the record lost the Slang "
+                               .. "attempt or the reason", k.name, t)
+                    elseif r.status == want then
+                        checked = checked + 1
+                        cprint("${color.success}  ok${clear}   "
+                               .. "%-28s %-5s %s%s", k.name, t, r.status,
+                               r.rejected_by and ("  (" .. r.rejected_by
+                                                  .. ")") or "")
+                    else
+                        failures = failures + 1
+                        cprint("${color.error}  FAIL${clear} %-28s %-5s "
+                               .. "expected %s, got %s", k.name, t, want,
+                               r.status)
+                        cprint("${dim}%s", shaders.describe(r))
+                    end
+                end
+            end
+
+            -- The hash assumes a kernel compiles to the same bytes every
+            -- time. Check that on a real kernel rather than assume it.
+            for _, k in ipairs(kernels) do
+                if k.name == "baseline/imports_common" then
+                    local t = targets[1]
+                    local a = shaders.compile(k, t, {toolchain = tc,
+                                                     outputdir = outdir})
+                    local b = shaders.compile(k, t, {toolchain = tc,
+                                                     outputdir = outdir})
+                    local deps = table.concat(a.dependencies or {}, " ")
+                    if a.status == "COMPILED" then
+                        checked = checked + 1
+                        if a.sha256 ~= b.sha256 then
+                            failures = failures + 1
+                            cprint("${color.error}  FAIL${clear} %s is not "
+                                   .. "deterministic: %s then %s", k.name,
+                                   a.sha256, b.sha256)
+                        end
+                        -- An import must be tracked, or editing a module
+                        -- would leave stale kernels behind.
+                        checked = checked + 1
+                        if not deps:find("common/fixture_hash.slang", 1,
+                                         true) then
+                            failures = failures + 1
+                            cprint("${color.error}  FAIL${clear} %s does not "
+                                   .. "list its import: %s", k.name, deps)
+                        end
+                    end
+                end
+            end
+            os.tryrm(outdir)
+
+            cprint("")
+            if unchecked > 0 then
+                cprint("${color.warning}%d outcome(s) not checkable here"
+                       .. "${clear} (Apple's toolchain is macOS-only)",
+                       unchecked)
+            end
+            if failures > 0 then
+                raise("shader toolchain self-test: %d of %d check(s) failed",
+                      failures, failures + checked)
+            end
+            cprint("${color.success}shader toolchain self-test: %d check(s) "
+                   .. "passed", checked)
+            return
+        end
+
+        local kernels, misplaced = shaders.discover()
+        for _, reason in ipairs(misplaced) do
+            cprint("${color.error}misplaced${clear} %s", reason)
+        end
+        if #misplaced > 0 then
+            raise("%d .slang file(s) outside baseline/, probes/ and common/",
+                  #misplaced)
+        end
+
+        local failed = {}
+        for _, k in ipairs(kernels) do
+            for _, t in ipairs(targets) do
+                local r = shaders.compile(k, t, {toolchain = tc})
+                if r.status == "FAILED" then
+                    table.insert(failed, r)
+                end
+            end
+        end
+
+        local index = shaders.index(kernels, tc,
+                                    {generator = "xmake ci-shaders"})
+        shaders.prune(index)
+        local indexfile = shaders.write_index(index)
+        local output = option.get("output")
+        if output then
+            os.mkdir(path.directory(output))
+            os.cp(indexfile, output)
+        end
+
+        cprint("${bright}kernels${clear}  %d under shaders/", #kernels)
+        if #kernels == 0 then
+            cprint("${color.warning}  none yet.${clear} The toolchain is "
+                   .. "ready; the first baseline kernel makes gate B0.1 "
+                   .. "checkable (r0-architecture.md section 4).")
+        end
+        local unvalidated = 0
+        for _, entry in ipairs(index.kernels) do
+            for _, t in ipairs(targets) do
+                local r = entry.results[t]
+                local colour = "${color.success}"
+                if r.status == "FAILED" or r.status == "NOT_BUILT" then
+                    colour = "${color.error}"
+                elseif r.status ~= "COMPILED" then
+                    colour = "${color.warning}"
+                end
+                if r.status == "UNVALIDATED" then
+                    unvalidated = unvalidated + 1
+                end
+                local note = ""
+                if r.rejected_by then
+                    note = "  rejected by " .. r.rejected_by
+                elseif r.slang_result then
+                    note = "  via MSL escape (Slang: "
+                           .. r.slang_result.reason .. ")"
+                end
+                cprint("  %-8s %-36s %-5s " .. colour .. "%s${clear}%s",
+                       entry.class, entry.name, t, r.status, note)
+            end
+        end
+
+        -- architecture.md section 10: "If more than one kernel needs it,
+        -- D3's cost model is wrong." That is about the kernels the engine
+        -- needs; a probe's escape measures the hardware apart from Slang.
+        for _, class in ipairs({"baseline", "probe"}) do
+            local list = index.escapes[class]
+            if #list > 0 then
+                cprint("${bright}MSL escapes${clear} (%s)  %s", class,
+                       table.concat(list, ", "))
+            end
+        end
+        if #index.escapes.baseline > 1 then
+            cprint("${color.warning}%d baseline kernels ship hand-written "
+                   .. "MSL.${clear} architecture.md section 10: past one, "
+                   .. "D3's cost model is wrong and D2's Metal estimate "
+                   .. "moves toward 800 hours. Raise it.",
+                   #index.escapes.baseline)
+        end
+
+        cprint("${bright}shader hash${clear}  (what a run manifest records)")
+        for _, t in ipairs(targets) do
+            local h = index.shader_hash[t]
+            if h.status == "OK" then
+                cprint("  %-5s %s", t, h.value)
+            else
+                cprint("${color.warning}  %-5s UNAVAILABLE${clear}  %s", t,
+                       h.reason)
+            end
+        end
+        cprint("${dim}  index: %s", path.relative(indexfile,
+                                                  os.projectdir()))
+
+        for _, r in ipairs(failed) do
+            cprint("")
+            cprint("${color.error}%s", shaders.describe(r))
+        end
+        if #failed > 0 then
+            raise("%d kernel compile(s) failed", #failed)
+        end
+        -- On macOS the MSL can be proven, so failing to prove it is a broken
+        -- runner. Elsewhere it is expected, and said so.
+        if unvalidated > 0 then
+            if os.host() == "macosx" then
+                raise("%d MSL compile(s) could not be validated: %s. B0.1 "
+                      .. "cannot be evaluated without Apple's toolchain, and "
+                      .. "an absent toolchain is never a pass", unvalidated,
+                      tc.metal.reason or tc.metallib.reason)
+            end
+            cprint("${color.warning}%d MSL compile(s) not validated here; "
+                   .. "only a macOS host proves B0.1 for MSL", unvalidated)
+        end
+    end)
+task_end()
+
+-- -------------------------------------------------------- ci-shader-hash ---
+
+task("ci-shader-hash")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-shader-hash [--backend=<name>] "
+                      .. "[--stamp=<manifest.json>]",
+        description = "Compute the shader hash of the compiled set, and "
+                      .. "optionally write it into a run manifest.",
+        options = {
+            {'b', "backend", "kv", nil, "vulkan or metal: the backend whose "
+                                        .. "shader set to hash. Default: "
+                                        .. "every target built, or the "
+                                        .. "stamped manifest's own backend."},
+            {'s', "stamp", "kv", nil, "Write shader_hash into this run "
+                                      .. "manifest, then validate it against "
+                                      .. "the schema."},
+        }
+    }
+    on_run(function ()
+        import("core.base.option")
+        import("core.base.json")
+        import("core.project.config")
+        import("shaders", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("jsonschema",
+               {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        config.load()
+        local index, err = shaders.load_index()
+        if not index then
+            raise(err)
+        end
+
+        -- Recomputed from the artifacts on disk, not copied from the index:
+        -- the hash has to describe the bytes a backend would load now, and
+        -- an artifact replaced since the index was written would otherwise
+        -- go unnoticed.
+        local hashes = shaders.rehash(index)
+
+        local stamp = option.get("stamp")
+        local manifest
+        local backend = option.get("backend")
+        if stamp then
+            manifest = json.loadfile(stamp)
+            if not backend and manifest.backend ~= json.null then
+                backend = manifest.backend
+            end
+            if not backend then
+                raise("%s names no backend; pass --backend=vulkan or "
+                      .. "--backend=metal", stamp)
+            end
+        end
+
+        local targets = index.targets
+        if backend then
+            local t = shaders.target_for_backend(backend)
+            if not t then
+                raise("backend '%s' loads no compiled shader set", backend)
+            end
+            targets = {t}
+        end
+
+        for _, t in ipairs(targets) do
+            local h = hashes[t]
+            if not h then
+                raise("the %s target was not built; configure it with "
+                      .. "'xmake f --shader-targets=%s'", t, t)
+            end
+            if h.status == "OK" then
+                cprint("%-5s %s", t, h.value)
+            else
+                cprint("${color.warning}%-5s UNAVAILABLE${clear}  %s", t,
+                       h.reason)
+            end
+        end
+
+        if stamp then
+            local h = hashes[targets[1]]
+            -- A manifest must never carry a hash for a set that was not
+            -- loadable. The field stays null and the reason is raised.
+            if h.status ~= "OK" then
+                raise("not stamping %s: %s", stamp, h.reason)
+            end
+            manifest.shader_hash = h.value
+            io.writefile(stamp, json.encode(manifest))
+            local ok, errors = jsonschema.validate_file(stamp,
+                path.join(os.projectdir(), "ci", "schema",
+                          "run-manifest.schema.json"))
+            if not ok then
+                for _, e in ipairs(errors) do
+                    cprint("${color.error}  %s", e)
+                end
+                raise("%s no longer validates against the run manifest "
+                      .. "schema", stamp)
+            end
+            cprint("${color.success}stamped %s${clear} (%s)", stamp,
+                   targets[1])
+        end
+    end)
+task_end()
+
 -- -------------------------------------------------------------- ci-check ---
 
 task("ci-check")
@@ -442,6 +811,11 @@ task("ci-check")
             {name = "lua",    task = "ci-lua"},
             {name = "tests",  task = "ci-test"},
             {name = "unit",   task = "ci-unit"},
+            -- The toolchain proves itself on its fixtures before it is
+            -- trusted with the real kernels.
+            {name = "shader toolchain", task = "ci-shaders",
+             options = {["self-test"] = true}},
+            {name = "shaders", task = "ci-shaders"},
             -- B0.4 is a release-gate condition, so the local push tier
             -- reports unfilled pins rather than failing on them.
             -- Locally the toolchain is present, so tool pins are checked
@@ -512,7 +886,7 @@ task("ci-inventory")
         -- what makes this real' rather than reporting a green tick.
         local cpp     = sources.list()
         local units   = sources.translation_units()
-        local shaders = os.files(path.join(os.projectdir(), "shaders",
+        local kernels = os.files(path.join(os.projectdir(), "shaders",
                                            "**.slang"))
         local bundles = os.dirs(path.join(os.projectdir(), "results", "*"))
 
@@ -541,7 +915,7 @@ task("ci-inventory")
             checked_at_utc   = os.date("!%Y-%m-%dT%H:%M:%SZ"),
             cpp_sources      = #cpp,
             translation_units = #units,
-            slang_shaders    = #shaders,
+            slang_shaders    = #kernels,
             result_bundles   = #bundles,
             pins_complete    = (#unpinned == 0),
             unpinned         = unpinned,
@@ -619,7 +993,9 @@ task("ci-test")
         -- push tier alongside the other cheap checks.
         local suites = {"probe_test", "powermetrics_test",
                         "jsonschema_test", "machine_test",
-                        "bench_test", "bdestyle_test"}
+                        "bench_test", "bdestyle_test",
+                        "shaders_test", "device_probes_test",
+                        "ratios_test"}
 
         local total, failed = 0, 0
         for _, name in ipairs(suites) do
@@ -670,12 +1046,14 @@ task("bench")
             {nil, "all-fixtures", "k", nil, "Run every registered fixture."},
             {nil, "runs",    "kv", nil, "Override the tier's run count."},
             {nil, "no-power", "k", nil, "Skip the powermetrics capture."},
+            {nil, "no-probes", "k", nil, "Skip the vg_bench device probes."},
         }
     }
     on_run(function ()
         import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("bench", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("core.base.json")
 
         local out = option.get("out")
         if not out then
@@ -702,6 +1080,7 @@ task("bench")
             scene      = option.get("scene"),
             runs       = option.get("runs") and tonumber(option.get("runs")),
             skip_power = option.get("no-power"),
+            device_probes = not option.get("no-probes"),
             command    = table.concat(parts, " "),
         })
 
@@ -715,6 +1094,15 @@ task("bench")
         if manifest.status_reason then
             style.say("${dim}  %s", manifest.status_reason)
         end
+        local probes = json.loadfile(path.join(dir, "device-probes.json"))
+        if probes and probes.status == "RAN" then
+            for _, p in ipairs(probes.probes) do
+                style.say("  %-12s %s", p.status, p.id)
+            end
+        elseif probes then
+            style.say("${warn}  device probes not run:${reset} %s",
+                      tostring(probes.reason))
+        end
 
         for _, f in ipairs(report.findings or {}) do
             local colour = f.severity == "error" and "${bad}"
@@ -727,6 +1115,65 @@ task("bench")
                   .. "this is a harness bug, not a run failure")
         end
         style.say("${ok}bundle validates against the frozen schema")
+    end)
+task_end()
+
+-- ------------------------------------------------------------- ci-ratios ---
+
+task("ci-ratios")
+    set_category("plugin")
+    set_menu {
+        usage       = "xmake ci-ratios --apple=<bundle> --linux=<bundle>",
+        description = "Derive the per-workload Apple-to-Linux ratios of gate "
+                      .. "B0 from two bundles.",
+        options = {
+            {nil, "apple", "kv", nil, "The Apple bundle (Profile A, Metal)."},
+            {nil, "linux", "kv", nil, "The Linux bundle (Profile L, Vulkan)."},
+            {'o', "out", "kv", nil, "Write ratios.json here instead of into "
+                                    .. "both bundles."},
+        }
+    }
+    on_run(function ()
+        import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("core.base.option")
+        import("core.base.json")
+        import("ratios", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local apple, linux = option.get("apple"), option.get("linux")
+        if not apple or not linux then
+            raise("both --apple and --linux are needed: a ratio has two "
+                  .. "sides")
+        end
+        local doc = ratios.document(path.absolute(apple),
+                                    path.absolute(linux))
+
+        -- r0-benchmarks.md section 6 puts ratios.json in both gate bundles.
+        local targets = option.get("out")
+                        and {option.get("out")}
+                        or {path.join(apple, "ratios.json"),
+                            path.join(linux, "ratios.json")}
+        for _, file in ipairs(targets) do
+            io.writefile(file, json.encode(doc))
+        end
+
+        style.say("${bold}Apple-to-Linux ratios${reset}  %s on %s, %s on %s",
+                  tostring(doc.apple.device), tostring(doc.apple.backend),
+                  tostring(doc.linux.device), tostring(doc.linux.backend))
+        for _, w in ipairs(doc.workloads) do
+            if w.ratio ~= json.null then
+                style.say("  %-16s %8.3f  ${dim}%s${reset}", w.workload,
+                          w.ratio, tostring(w.unit))
+            else
+                style.say("  %-16s %8s  ${warn}%s${reset}", w.workload, "-",
+                          w.reason)
+            end
+        end
+        for _, c in ipairs(doc.caveats) do
+            style.say("${warn}  caveat:${reset} %s", c)
+        end
+        for _, file in ipairs(targets) do
+            style.say("${ok}wrote %s", file)
+        end
     end)
 task_end()
 
@@ -774,24 +1221,48 @@ task("ci-tidy")
         import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
+        -- clang-tidy 19 or newer. clang 18 declares __cpp_concepts as
+        -- 201907, and libstdc++ provides std::expected only from 202002, so
+        -- on Linux clang-tidy 18 cannot parse code that uses it, and every
+        -- finding is a parse error. Versioned names come first: Ubuntu
+        -- installs clang-tidy-19 beside an unversioned clang-tidy 18.
         -- Homebrew keeps clang-tidy out of PATH because it would shadow
-        -- Apple's clang; look there before giving up.
+        -- Apple's clang; look there, versioned kegs included, before giving
+        -- up.
+        local minimum = 19
         local candidates = {
+            "clang-tidy-20",
+            "clang-tidy-19",
             "clang-tidy",
             "/opt/homebrew/opt/llvm/bin/clang-tidy",
             "/usr/local/opt/llvm/bin/clang-tidy",
         }
+        -- The kegs are symlinks, which os.files does not descend into.
+        for _, keg in ipairs(os.filedirs("/opt/homebrew/opt/llvm@*")) do
+            table.insert(candidates, path.join(keg, "bin", "clang-tidy"))
+        end
         local tidy
+        local too_old = {}
         for _, c in ipairs(candidates) do
-            if probe.run(c, {"--version"}).status == "OK" then
-                tidy = c
-                break
+            -- 'lines': the version is on the second line of the output.
+            local version = probe.match(c, {"--version"}, "version%s+(%d+)",
+                                        {lines = true})
+            if version.status == "OK" then
+                if tonumber(version.value) >= minimum then
+                    tidy = c
+                    break
+                end
+                table.insert(too_old, ("%s is %s"):format(c, version.value))
             end
         end
         if not tidy then
-            raise("clang-tidy not found. Tried: %s",
+            raise("clang-tidy %d or newer not found%s. Tried: %s", minimum,
+                  #too_old > 0
+                      and (" (" .. table.concat(too_old, ", ") .. ")")
+                      or "",
                   table.concat(candidates, ", "))
         end
+        style.say("${dim}%s${reset}", tidy)
 
         -- clang-tidy needs the real compile flags; xmake keeps
         -- compile_commands.json up to date at the project root.
@@ -914,15 +1385,21 @@ task("ci-unit")
         import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
-        import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
         -- 'xmake test' exists, but its summary is printed by xmake itself in
         -- full-brightness truecolour that no project setting can reach. This
         -- task runs the same binary and reports through style.lua, so unit
         -- test output is readable on the same backgrounds as everything else.
-        if #sources.translation_units() == 0 then
-            style.say("${warn}no translation units yet; nothing to test"
-                      .. "${reset}")
+        --
+        -- The guard is on tests, not on C++: first-party code without a test
+        -- (vg_bench, for one) leaves the test target disabled in xmake.lua,
+        -- with nothing to build.
+        local tests = {}
+        for _, pattern in ipairs({"tests/**.t.cpp", "gamegine/src/**.t.cpp"}) do
+            table.join2(tests, os.files(path.join(os.projectdir(), pattern)))
+        end
+        if #tests == 0 then
+            style.say("${warn}no unit tests yet; nothing to test${reset}")
             return
         end
 

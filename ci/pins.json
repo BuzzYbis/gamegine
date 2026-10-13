@@ -27,7 +27,8 @@
         "stream": "stderr",
         "pattern": "^(.+)$"
       },
-      "bump_policy": "Named new baseline. Shader hashes change, so golden images are re-verified before the reference is updated."
+      "bump_policy": "Named new baseline. Shader hashes change, so golden images are re-verified before the reference is updated.",
+      "note": "The slangc that Vulkan SDK 1.4.341.0 ships. Upstream tags this commit vulkan-sdk-1.4.341.0 (c8ddf20bb, 52 commits after v2026.1), and no Slang release carries it, so installing that SDK is how to get it. The push tier's shader job does exactly that."
     },
     "meshoptimizer": {
       "version": "7d8eca58818927c6b2dbcdd44763f95b798d4232",

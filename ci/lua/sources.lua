@@ -13,6 +13,7 @@ local FIRST_PARTY = {
     "gamegine",
     "tests",
     "benchmarks",
+    "bench",
     "tools",
     "shaders",
 }

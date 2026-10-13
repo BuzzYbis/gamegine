@@ -75,7 +75,7 @@ cmake-build-*/
 
 # General
 **/.DS_Store
-./idea
+./.idea/
 ./vscode
 ./zed
 

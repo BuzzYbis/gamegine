@@ -166,6 +166,20 @@ add_requires("benchmark")
 -- carries yet; see xmake/packages/m/meshoptimizer/xmake.lua for why.
 add_requires("meshoptimizer 7d8eca58818927c6b2dbcdd44763f95b798d4232")
 
+-- vg_bench reads the shader index, build/shaders/index.json.
+add_requires("nlohmann_json v3.12.0")
+
+-- vg_bench checks each shader artifact against the index's sha256.
+add_requires("picosha2 2022.08.08")
+
+-- vg_bench's Metal backend: Apple's C++ interface to Metal, so the backend
+-- is plain C++ rather than Objective-C++. Version 26 matches the macOS 26
+-- SDK.
+if is_plat("macosx") then
+    add_requires("metal-cpp 26")
+end
+
+
 
 -- =============================================================================
 -- Target: Gamegine (Static Library)
@@ -184,9 +198,11 @@ target("gamegine")
 
     add_rules("gamegine.warnings", "gamegine.werror", "gamegine.no_exceptions")
 
-    -- Include directories & headers
-    add_includedirs("gamegine/include", {public = true})
-    add_headerfiles("gamegine/include/(engine/**.h)")
+    -- Include directories & headers, once the directory exists.
+    if os.isdir(path.join(os.scriptdir(), "gamegine/include")) then
+        add_includedirs("gamegine/include", {public = true})
+        add_headerfiles("gamegine/include/(engine/**.h)")
+    end
 
     -- Source files. The suffix conventions are:
     --
@@ -259,10 +275,20 @@ target("tests")
     -- Each pattern is guarded on its own: xmake warns for any pattern that
     -- matches nothing, and colocated tests may exist before the tests tree
     -- does, or the other way round.
+    local has_tests = false
     for _, pattern in ipairs({"tests/**.t.cpp", "gamegine/src/**.t.cpp"}) do
         if #os.files(path.join(os.scriptdir(), pattern)) > 0 then
             add_files(pattern)
+            has_tests = true
         end
+    end
+
+    -- With no test yet there is nothing to link: no object references
+    -- gtest_main's main(), so the linker never pulls it in and the binary has
+    -- no entry point. Disabled until the first test exists, 'xmake test'
+    -- runs nothing instead of failing to link.
+    if not has_tests then
+        set_enabled(false)
     end
 
     -- Google Test dependency
@@ -313,6 +339,175 @@ target("imgui")
 
     if is_plat("macosx") then
         add_frameworks("Metal", "Cocoa")
+    end
+
+
+-- =============================================================================
+-- Shaders (Slang, D3)
+--
+-- Every kernel under shaders/ is compiled ahead of time; nothing is compiled
+-- at run time. SPIR-V for Vulkan on Linux; MSL on macOS, put through Apple's
+-- metal and metallib so that what ships is what Apple's toolchain accepted.
+--
+--   xmake build shaders                    compile for this host's target
+--   xmake f --shader-targets=spirv,msl     compile for both
+--
+-- Output lands in build/shaders/, with index.json listing every kernel, its
+-- per-target outcome and the shader hash a run manifest records. Anything
+-- that loads kernels declares add_deps("shaders").
+--
+-- The rule and 'xmake ci-shaders' share one implementation,
+-- ci/lua/shaders.lua. shaders/README.md has the rules a kernel follows.
+
+option("shader-targets")
+    set_default("")
+    set_showmenu(true)
+    set_category("shaders")
+    set_description("Shader targets, comma-separated: spirv, msl.",
+                    "Default: spirv on Linux, msl on macOS.")
+option_end()
+
+rule("gamegine.slang")
+    set_extensions(".slang")
+
+    -- Resolve the targets and probe the toolchain once per build, not once
+    -- per file.
+    before_build(function (target)
+        import("shaders", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local tc = shaders.toolchain(
+            shaders.parse_targets(get_config("shader-targets")))
+        shaders.require_toolchain(tc)
+        if not tc.slang_pin_matches then
+            cprint("${color.warning}slangc %s is not the pinned %s; the "
+                   .. "shader hash will not match a pinned build",
+                   tc.slangc.value, tc.slang_pin)
+        end
+        target:data_set("gamegine.slang.toolchain", tc)
+    end)
+
+    on_build_file(function (target, sourcefile, opt)
+        import("core.project.depend")
+        import("utils.progress")
+        import("shaders", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local kernel, reason = shaders.kernel(sourcefile)
+        if not kernel then
+            raise(reason)
+        end
+        if kernel.class == "module" then
+            return
+        end
+
+        local tc = target:data("gamegine.slang.toolchain")
+        for _, name in ipairs(tc.targets) do
+            local files = shaders.paths(kernel, name)
+            local dependfile = target:dependfile(files.record)
+            local values = shaders.fingerprint(name, tc)
+            local forced = target:is_rebuilt() or not os.isfile(files.record)
+            local dependinfo = (not forced and depend.load(dependfile)) or {}
+            if forced or depend.is_changed(dependinfo, {
+                    lastmtime = os.mtime(dependfile), values = values,
+                    files = shaders.inputs(kernel, name)}) then
+                progress.show(opt.progress,
+                              "${color.build.object}compiling.slang.%s %s",
+                              name, sourcefile)
+                local record = shaders.compile(kernel, name, {toolchain = tc})
+                -- An unsupported probe is a result, not a problem: one line
+                -- here, the diagnostics in build/shaders/index.json.
+                if record.status == "FAILED" then
+                    raise(shaders.describe(record))
+                elseif record.status ~= "COMPILED" then
+                    cprint("${color.warning}%s [%s] %s${clear}  %s",
+                           record.kernel, name, record.status, record.reason)
+                end
+                -- Saved after the compile, so the imports it just reported
+                -- are tracked from the next build on.
+                depend.save({files = shaders.inputs(kernel, name),
+                             values = values}, dependfile)
+            end
+        end
+    end)
+
+    -- Index what was built, including the kernels that were up to date.
+    after_build(function (target)
+        import("shaders", {rootdir = path.join(os.projectdir(), "ci", "lua")})
+
+        local kernels = {}
+        local batch = target:sourcebatches()["gamegine.slang"]
+        for _, sourcefile in ipairs(batch and batch.sourcefiles or {}) do
+            local kernel = shaders.kernel(sourcefile)
+            if kernel and kernel.class ~= "module" then
+                table.insert(kernels, kernel)
+            end
+        end
+        table.sort(kernels, function (a, b) return a.name < b.name end)
+
+        local tc = target:data("gamegine.slang.toolchain")
+        local index = shaders.index(kernels, tc,
+                                    {generator = "xmake build shaders"})
+        shaders.prune(index)
+        shaders.write_index(index)
+    end)
+rule_end()
+
+
+-- =============================================================================
+-- Target: Shaders (compiled kernels, no code)
+
+target("shaders")
+    -- 'object', not 'phony': a phony target never runs a rule's per-file
+    -- build step.
+    set_kind("object")
+    set_default(false)
+    add_rules("gamegine.slang")
+
+    -- Guarded: xmake warns on a pattern that matches nothing, and R0 starts
+    -- with no kernels.
+    if #os.files(path.join(os.scriptdir(), "shaders/**.slang")) > 0 then
+        add_files("shaders/**.slang")
+    end
+
+
+-- =============================================================================
+-- Target: vg_bench (the R0 probe harness)
+--
+-- One backend per API, bench_vulkan.cpp and bench_metal.cpp, behind the small
+-- interface in bench_gpu.h; the probes, the host checks and the report are
+-- shared, in vg_bench.cpp, so both APIs run exactly the same work. Headless,
+-- and not a renderer (r0-architecture.md section 8).
+--
+--   xmake build vg_bench
+--   xmake run vg_bench --backend=metal
+
+target("vg_bench")
+    set_kind("binary")
+    add_rules("gamegine.warnings", "gamegine.werror")
+
+    -- Kernels are compiled ahead of time, never at run time.
+    add_deps("shaders")
+
+    -- Its defaults, build/shaders and results/, are relative to the root.
+    set_rundir("$(projectdir)")
+
+    add_includedirs("bench")
+    add_files("bench/vg_bench.cpp", "bench/bench_vulkan.cpp")
+    -- meshoptimizer is page_decode's provisional codec.
+    add_packages("vulkansdk", "meshoptimizer", "nlohmann_json", "picosha2")
+
+    if is_plat("macosx") then
+        -- The Metal backend, in C++ through metal-cpp.
+        add_files("bench/bench_metal.cpp")
+        add_packages("metal-cpp")
+
+        -- The same loader rpath the engine library needs; see there.
+        local vulkan_sdk = os.getenv("VULKAN_SDK")
+        if vulkan_sdk then
+            add_rpathdirs(path.join(vulkan_sdk, "lib"))
+        end
+        add_rpathdirs("/usr/local/lib")
+    elseif is_plat("linux") then
+        add_syslinks("pthread", "dl", "m")
     end
 
 
