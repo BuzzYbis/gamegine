@@ -9,7 +9,7 @@
 
 RWStructuredBuffer<uint> output;
 
-[require(spirv)]
+[require(spirv_1_5)]
 [require(metal)]
 [shader("compute")]
 [numthreads(64, 1, 1)]

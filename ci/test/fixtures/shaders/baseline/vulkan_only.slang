@@ -9,7 +9,7 @@
 
 RWStructuredBuffer<uint> output;
 
-[require(spirv)]
+[require(spirv_1_5)]
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void fill(uint3 id : SV_DispatchThreadID)
