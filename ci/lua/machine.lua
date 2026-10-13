@@ -43,7 +43,7 @@ local PROFILES = {
     },
 }
 
--- Pull "Key: value" out of a system_profiler or lscpu style block.
+-- Pull "Key: value" out of a system_profiler or /proc/cpuinfo style block.
 function _field(text, key)
     if not text then
         return nil
@@ -369,18 +369,46 @@ end
 
 -- ---------------------------------------------------------------- Linux ----
 
+-- Pull KEY=value out of /etc/os-release, whose values may be quoted. The key
+-- must start a line, or NAME would match inside PRETTY_NAME.
+function _os_release(block, key)
+    if block.status ~= "OK" then
+        return block
+    end
+    local value = ("\n" .. block.value):match("\n" .. key .. "=([^\r\n]*)")
+    if not value then
+        return probe.unavailable(
+            ("field %q not present in output"):format(key), block.source)
+    end
+    value = value:trim():gsub("^([\"'])(.*)%1$", "%2")
+    return probe.ok(value, block.source)
+end
+
 function _capture_linux()
     local m = {}
 
     local osrel = probe.run("cat", {"/etc/os-release"}, {lines = true})
-    m.os_name    = _from_block(osrel, "^NAME")
-    m.os_version = _from_block(osrel, "^VERSION_ID")
+    m.os_name    = _os_release(osrel, "NAME")
+    m.os_version = _os_release(osrel, "VERSION_ID")
     m.os_build   = probe.run("uname", {"-v"})
     m.kernel     = probe.run("uname", {"-r"})
 
-    local lscpu = _capture("lscpu", {})
-    m.cpu_model   = _from_block(lscpu, "Model name")
-    m.cpu_logical = _tonumber_record(_from_block(lscpu, "^CPU%(s%)"))
+    -- /proc/cpuinfo, not lscpu: on GitHub's Linux runners lscpu never
+    -- returned, and the probe timeout did not end it.
+    local cpuinfo = probe.run("cat", {"/proc/cpuinfo"}, {lines = true})
+    m.cpu_model = _from_block(cpuinfo, "model name")
+    if cpuinfo.status == "OK" then
+        local logical = 0
+        for _ in ("\n" .. cpuinfo.value):gmatch("\nprocessor%s*:") do
+            logical = logical + 1
+        end
+        m.cpu_logical = logical > 0
+            and probe.ok(logical, cpuinfo.source)
+            or probe.unavailable("no 'processor' line in the output",
+                                 cpuinfo.source)
+    else
+        m.cpu_logical = cpuinfo
+    end
 
     m.hardware_model = probe.readfile(
         "/sys/devices/virtual/dmi/id/product_name")
