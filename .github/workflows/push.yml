@@ -94,6 +94,9 @@ jobs:
   tests:
     name: CPU fixtures (CI tooling)
     runs-on: ubuntu-latest
+    # The machine capture in machine_test has hung on every Linux runner
+    # until GitHub killed it at six hours. Fail in minutes instead.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -101,6 +104,10 @@ jobs:
           xmake-version: '3.1.1'
       - name: Run the CI tooling tests
         run: xmake ci-test
+        # Temporary: xmake prints every process it starts, so the last one
+        # before the hang names the probe that blocks. Remove once fixed.
+        env:
+          XMAKE_PROFILE: stuck
 
   # The harness, end to end, on every push: capture the machine manifest,
   # emit a T1 bundle, and validate its layout. No GPU and no engine needed --
@@ -112,6 +119,9 @@ jobs:
   harness:
     name: benchmark harness (T1)
     runs-on: ${{ matrix.os }}
+    # The Linux capture has hung on every runner until GitHub killed it at
+    # six hours. Fail in minutes instead.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +134,10 @@ jobs:
 
       - name: Capture the machine manifest
         run: xmake ci-machine -o "machine-${{ matrix.os }}.json"
+        # Temporary: xmake prints every process it starts, so the last one
+        # before the hang names the probe that blocks. Remove once fixed.
+        env:
+          XMAKE_PROFILE: stuck
 
       - name: Emit a T1 bundle
         run: xmake bench --tier=T1 --out="results/ci/${{ github.sha }}" --no-power
