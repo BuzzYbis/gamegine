@@ -1278,8 +1278,35 @@ task("ci-tidy")
             return
         end
 
-        local failed = 0
+        -- The skip list: translation units built on one platform only.
+        -- Anywhere else they have no compile command, and clang-tidy would
+        -- analyse them with flags guessed from a neighbour -- headers
+        -- missing, platform macros unset -- so every finding would be an
+        -- artefact of the guess. Each is skipped on every host but the one
+        -- that builds it.
+        local platform_only = {
+            {unit = "bench/bench_metal.cpp", host = "macosx",
+             why  = "the Metal backend, built on macOS only"},
+        }
+        local skipped = {}
+        for _, entry in ipairs(platform_only) do
+            if os.host() ~= entry.host then
+                skipped[entry.unit] = entry.why
+            end
+        end
+        local analysed = {}
         for _, unit in ipairs(units) do
+            local relative = path.relative(unit, os.projectdir())
+            if skipped[relative] then
+                style.say("${dim}skip${reset} %s ${dim}(%s)${reset}",
+                          relative, skipped[relative])
+            else
+                table.insert(analysed, unit)
+            end
+        end
+
+        local failed = 0
+        for _, unit in ipairs(analysed) do
             local relative = path.relative(unit, os.projectdir())
             local argv = {"--config-file="
                           .. path.join(os.projectdir(), ".clang-tidy"),
@@ -1327,7 +1354,7 @@ task("ci-tidy")
         if failed > 0 then
             raise("%d translation unit(s) have findings", failed)
         end
-        style.say("${ok}%d translation unit(s) clean", #units)
+        style.say("${ok}%d translation unit(s) clean", #analysed)
     end)
 task_end()
 

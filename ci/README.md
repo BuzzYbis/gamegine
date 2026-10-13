@@ -328,6 +328,15 @@ Two are worth knowing:
   argument is a whole declaration and `(auto window) = ...` is not valid C++.
   Suppressed for that macro alone, not globally.
 
+`ci-tidy` needs clang-tidy 19 or newer: with libstdc++, clang 18 cannot see
+`std::expected`, and every finding would be a parse error. It also keeps a
+skip list of translation units built on one platform only, such as
+`bench/bench_metal.cpp`, macOS only. Elsewhere such a unit has no compile
+command, so clang-tidy would guess its flags from a neighbour and report
+artefacts of the guess. Each unit is skipped on every host but the one that
+builds it, and the run prints the skip with its reason. Add an entry there
+when a new platform-only unit appears.
+
 ---
 
 ## The benchmark harness
