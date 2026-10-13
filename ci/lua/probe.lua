@@ -158,15 +158,22 @@ function match(program, argv, pattern, opt)
 end
 
 -- Read a file and return its trimmed first line as a record.
+--
+-- Through 'cat', not io.readfile: xmake's io.readfile never returns on a
+-- sysfs file, which reports a 4096-byte size for a few bytes of content.
+-- That hung every Linux capture on GitHub's runners, whose DMI files exist.
 function readfile(path)
     if not os.isfile(path) then
         return unavailable("file does not exist", path)
     end
-    local text = io.readfile(path)
-    if not text or text:trim() == "" then
+    local record = run("cat", {path}, {allow_empty = true})
+    if record.status ~= "OK" then
+        return unavailable(record.reason, path)
+    end
+    if record.value == "" then
         return unavailable("file is empty", path)
     end
-    return ok(_firstline(text), path)
+    return ok(record.value, path)
 end
 
 -- True when the record carries a usable value.

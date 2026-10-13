@@ -43,7 +43,7 @@ local PROFILES = {
     },
 }
 
--- Pull "Key: value" out of a system_profiler or /proc/cpuinfo style block.
+-- Pull "Key: value" out of a system_profiler or lscpu style block.
 function _field(text, key)
     if not text then
         return nil
@@ -393,22 +393,9 @@ function _capture_linux()
     m.os_build   = probe.run("uname", {"-v"})
     m.kernel     = probe.run("uname", {"-r"})
 
-    -- /proc/cpuinfo, not lscpu: on GitHub's Linux runners lscpu never
-    -- returned, and the probe timeout did not end it.
-    local cpuinfo = probe.run("cat", {"/proc/cpuinfo"}, {lines = true})
-    m.cpu_model = _from_block(cpuinfo, "model name")
-    if cpuinfo.status == "OK" then
-        local logical = 0
-        for _ in ("\n" .. cpuinfo.value):gmatch("\nprocessor%s*:") do
-            logical = logical + 1
-        end
-        m.cpu_logical = logical > 0
-            and probe.ok(logical, cpuinfo.source)
-            or probe.unavailable("no 'processor' line in the output",
-                                 cpuinfo.source)
-    else
-        m.cpu_logical = cpuinfo
-    end
+    local lscpu = _capture("lscpu", {})
+    m.cpu_model   = _from_block(lscpu, "Model name")
+    m.cpu_logical = _tonumber_record(_from_block(lscpu, "CPU(s)"))
 
     m.hardware_model = probe.readfile(
         "/sys/devices/virtual/dmi/id/product_name")
