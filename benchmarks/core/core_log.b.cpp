@@ -192,10 +192,10 @@ class SinkFile {
 
 /// What a log file holds.
 struct Tally {
-    std::uint64_t lines     = 0;  // record lines
-    std::uint64_t lost      = 0;  // records the logger reports lost
-    std::uint64_t malformed = 0;  // lines that are not whole
-    std::uint64_t bytes     = 0;  // size of the file
+    std::uint64_t d_lines     = 0;  // record lines
+    std::uint64_t d_lost      = 0;  // records the logger reports lost
+    std::uint64_t d_malformed = 0;  // lines that are not whole
+    std::uint64_t d_bytes     = 0;  // size of the file
 };
 
 /// The prefix is fixed-width while the seconds are below 10000: 28 characters,
@@ -210,12 +210,12 @@ constexpr std::size_t k_MESSAGE_AT  = 29;
 Tally read_back(const SinkFile& file)
 {
     Tally tally;
-    tally.bytes = file.size();
+    tally.d_bytes = file.size();
 
     std::ifstream in(file.path());
     for (std::string line; std::getline(in, line);) {
         if (line.size() < k_MESSAGE_AT || line[0] != '[' || line[28] != ' ') {
-            ++tally.malformed;
+            ++tally.d_malformed;
             continue;
         }
         std::string thread = line.substr(k_THREAD_AT, k_THREAD_SIZE);
@@ -228,9 +228,9 @@ Tally read_back(const SinkFile& file)
             std::string        word;
             std::uint64_t      count = 0;
             report >> name >> word >> count;
-            tally.lost += count;
+            tally.d_lost += count;
         } else {
-            ++tally.lines;
+            ++tally.d_lines;
         }
     }
     return tally;
@@ -313,12 +313,12 @@ double seconds_between(const Clock::time_point from,
 
 /// What the runs of one benchmark added up to.
 struct Totals {
-    std::uint64_t pushed     = 0;    // records logged
-    std::uint64_t lines      = 0;    // record lines in the file
-    std::uint64_t bytes      = 0;    // bytes of the file
-    std::uint64_t lost       = 0;    // records the logger reports lost
-    double        seconds    = 0.0;  // time measured
-    double        logger_cpu = 0.0;  // CPU the logger thread used
+    std::uint64_t d_pushed     = 0;    // records logged
+    std::uint64_t d_lines      = 0;    // record lines in the file
+    std::uint64_t d_bytes      = 0;    // bytes of the file
+    std::uint64_t d_lost       = 0;    // records the logger reports lost
+    double        d_seconds    = 0.0;  // time measured
+    double        d_logger_cpu = 0.0;  // CPU the logger thread used
 };
 
 /// Add a finished run to 'totals': the 'pushed' records the threads logged
@@ -335,21 +335,21 @@ bool account(benchmark::State&   state,
 {
     const Tally tally = read_back(file);
     (void)file.empty();  // only the disk use depends on it
-    if (tally.malformed != 0) {
+    if (tally.d_malformed != 0) {
         state.SkipWithError("the file holds a line that is not whole");
         return false;
     }
-    if (tally.lines + tally.lost != pushed) {
+    if (tally.d_lines + tally.d_lost != pushed) {
         state.SkipWithError("lines written plus lines reported lost is not "
                             "the lines logged");
         return false;
     }
-    totals.pushed += pushed;
-    totals.lines += tally.lines;
-    totals.bytes += tally.bytes;
-    totals.lost += tally.lost;
-    totals.seconds += elapsed;
-    totals.logger_cpu += logger_cpu;
+    totals.d_pushed += pushed;
+    totals.d_lines += tally.d_lines;
+    totals.d_bytes += tally.d_bytes;
+    totals.d_lost += tally.d_lost;
+    totals.d_seconds += elapsed;
+    totals.d_logger_cpu += logger_cpu;
     state.SetIterationTime(elapsed);
     return true;
 }
@@ -360,17 +360,18 @@ void report(benchmark::State& state, const Totals& totals)
     const auto share = [](const double part, const double whole) {
         return whole > 0 ? part / whole : 0.0;
     };
-    state.SetItemsProcessed(static_cast<std::int64_t>(totals.lines));
-    state.SetBytesProcessed(static_cast<std::int64_t>(totals.bytes));
+    state.SetItemsProcessed(static_cast<std::int64_t>(totals.d_lines));
+    state.SetBytesProcessed(static_cast<std::int64_t>(totals.d_bytes));
     state.counters["logged_per_s"] = benchmark::Counter(
-        share(static_cast<double>(totals.pushed), totals.seconds));
+        share(static_cast<double>(totals.d_pushed), totals.d_seconds));
     state.counters["dropped_%"] = benchmark::Counter(
-        100.0 * share(static_cast<double>(totals.lost),
-                      static_cast<double>(totals.pushed)));
-    state.counters["bytes_per_line"] = benchmark::Counter(share(
-        static_cast<double>(totals.bytes), static_cast<double>(totals.lines)));
-    state.counters["logger_cpu_%"]   = benchmark::Counter(
-        100.0 * share(totals.logger_cpu, totals.seconds));
+        100.0 * share(static_cast<double>(totals.d_lost),
+                      static_cast<double>(totals.d_pushed)));
+    state.counters["bytes_per_line"] = benchmark::Counter(
+        share(static_cast<double>(totals.d_bytes),
+              static_cast<double>(totals.d_lines)));
+    state.counters["logger_cpu_%"] = benchmark::Counter(
+        100.0 * share(totals.d_logger_cpu, totals.d_seconds));
 }
 
 // ------------------------------------------------------------ LogCall -----

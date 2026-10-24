@@ -252,7 +252,8 @@ flowchart TD
 | [`clusterlod.h`](https://github.com/zeux/meshoptimizer/blob/master/demo/clusterlod.h) | MIT, single header | Cluster-group DAG build. Configure, feed a mesh, receive groups of clusters via callback |
 | [Slang](https://github.com/shader-slang/slang) | MIT | Shader source to SPIR-V and MSL |
 | Physics library | — | Character controller and collision proxies |
-| Window and input, image codecs, CMake | — | |
+| [GLFW](https://www.glfw.org/) 3.4 | zlib | Window, events, cursor, native handles, behind `engine::platform::Window`: no GLFW header is in ours. X11 on Linux (also serves Wayland desktops through XWayland); native Wayland and AppKit stay possible behind the same interface |
+| Image codecs, CMake | — | |
 
 Versions and commits are pinned and recorded in every manifest. `clusterlod.h`'s API is explicitly evolving upstream, so a version bump is treated as a content format change requiring a re-cook and a named new baseline.
 

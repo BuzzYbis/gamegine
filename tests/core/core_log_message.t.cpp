@@ -250,11 +250,11 @@ TEST(CoreLogMessageId, AcceptsEachArgumentTypeForItsDeclarationsOnly)
     // can have, against every argument a message can declare. An unsigned
     // number is shown two ways, so it suits two declarations.
     struct Row {
-        Argument declared;
-        bool     none;
-        bool     unsigned_argument;
-        bool     signed_argument;
-        bool     float_argument;
+        Argument d_declared;
+        bool     d_none;
+        bool     d_unsigned_argument;
+        bool     d_signed_argument;
+        bool     d_float_argument;
     };
     constexpr std::array rows = {
         Row{Argument::e_NONE, true, false, false, false},
@@ -267,14 +267,14 @@ TEST(CoreLogMessageId, AcceptsEachArgumentTypeForItsDeclarationsOnly)
 
     for (const Row& row : rows) {
         SCOPED_TRACE(
-            static_cast<std::uint32_t>(std::to_underlying(row.declared)));
-        EXPECT_EQ(LogMessageId<void>::accepts(row.declared), row.none);
-        EXPECT_EQ(LogMessageId<std::uint32_t>::accepts(row.declared),
-                  row.unsigned_argument);
-        EXPECT_EQ(LogMessageId<std::int32_t>::accepts(row.declared),
-                  row.signed_argument);
-        EXPECT_EQ(LogMessageId<float>::accepts(row.declared),
-                  row.float_argument);
+            static_cast<std::uint32_t>(std::to_underlying(row.d_declared)));
+        EXPECT_EQ(LogMessageId<void>::accepts(row.d_declared), row.d_none);
+        EXPECT_EQ(LogMessageId<std::uint32_t>::accepts(row.d_declared),
+                  row.d_unsigned_argument);
+        EXPECT_EQ(LogMessageId<std::int32_t>::accepts(row.d_declared),
+                  row.d_signed_argument);
+        EXPECT_EQ(LogMessageId<float>::accepts(row.d_declared),
+                  row.d_float_argument);
     }
 }
 

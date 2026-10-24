@@ -306,6 +306,20 @@ through.
 
 The pass places the tags that are there; it does not add a *missing* one.
 
+### The naming rule: `d_` on every data member
+
+The standard's rule 6.5.3: a non-static data member begins with `d_`, a static
+one with `s_`. It has no exception for a plain `struct`, and its own example of
+one (`LinkedList_Link`) has `d_data` and `d_next_p`. So the public data of an
+attribute `struct` is `d_width`, and a call site reads
+`{.d_title = "gamegine", .d_width = 1920}`.
+
+`xmake ci-tidy` enforces it with `readability-identifier-naming`
+(`PrivateMemberPrefix`, `ProtectedMemberPrefix`, `PublicMemberPrefix` and
+`ClassMemberPrefix` in `.clang-tidy`), in tests and benchmarks too. Unlike the
+`_p` rule below it can be fixed by the tool: `xmake ci-tidy --fix` renames the
+member and every use of it.
+
 ### The naming rule: `_p` on every pointer member
 
 One rule is ours, not the standard's, and **it is reported, never fixed**:

@@ -76,7 +76,8 @@ Checks: >
 #   functions        snake_case        make_with_signed_context()
 #   types            CamelCase         Error, ErrorReasonTraits, Domain
 #   enumerators      e_                e_VULKAN
-#   private members  d_                d_raw
+#   data members     d_                d_raw, and d_width of a plain struct
+#   static members   s_                s_count
 #   class constants  k_                k_DOMAIN
 #   template params  t_                t_REASON
 #
@@ -94,6 +95,9 @@ CheckOptions:
   readability-identifier-naming.TypeAliasCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: e_
   readability-identifier-naming.PrivateMemberPrefix: d_
+  readability-identifier-naming.ProtectedMemberPrefix: d_
+  readability-identifier-naming.PublicMemberPrefix: d_
+  readability-identifier-naming.ClassMemberPrefix: s_
   readability-identifier-naming.ClassConstantPrefix: k_
   readability-identifier-naming.GlobalConstantPrefix: k_
   readability-identifier-naming.TemplateParameterPrefix: t_

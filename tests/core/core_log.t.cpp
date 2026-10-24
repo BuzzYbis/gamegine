@@ -385,13 +385,13 @@ class PipeCounter {
 /// microseconds, ']', a space, 5 for the severity, a space, 8 for the thread,
 /// a space, and then what the record says.
 struct Line {
-    bool          well_formed  = false;
-    std::uint64_t microseconds = 0;
-    std::string   severity;  // without its padding
-    std::string   thread;    // without its padding
-    std::string   payload;   // what follows the prefix
-    bool          has_context = false;
-    std::uint32_t context     = 0;
+    bool          d_well_formed  = false;
+    std::uint64_t d_microseconds = 0;
+    std::string   d_severity;  // without its padding
+    std::string   d_thread;    // without its padding
+    std::string   d_payload;   // what follows the prefix
+    bool          d_has_context = false;
+    std::uint32_t d_context     = 0;
 };
 
 constexpr std::size_t k_PREFIX_SIZE = 29;
@@ -410,18 +410,18 @@ Line parse(const std::string& text)
         micros.find_first_not_of("0123456789") != std::string::npos) {
         return line;
     }
-    line.well_formed  = true;
-    line.microseconds = (std::stoull(seconds) * 1'000'000U) +
-                        std::stoull(micros);
-    line.severity     = trimmed(text.substr(14, 5));
-    line.thread       = trimmed(text.substr(20, 8));
-    line.payload      = text.substr(k_PREFIX_SIZE);
+    line.d_well_formed  = true;
+    line.d_microseconds = (std::stoull(seconds) * 1'000'000U) +
+                          std::stoull(micros);
+    line.d_severity     = trimmed(text.substr(14, 5));
+    line.d_thread       = trimmed(text.substr(20, 8));
+    line.d_payload      = text.substr(k_PREFIX_SIZE);
 
-    const auto at = line.payload.find("ctx=0x");
-    if (at != std::string::npos && line.payload.size() >= at + 6 + 8) {
-        line.has_context = true;
-        line.context     = static_cast<std::uint32_t>(
-            std::stoul(line.payload.substr(at + 6, 8), nullptr, 16));
+    const auto at = line.d_payload.find("ctx=0x");
+    if (at != std::string::npos && line.d_payload.size() >= at + 6 + 8) {
+        line.d_has_context = true;
+        line.d_context     = static_cast<std::uint32_t>(
+            std::stoul(line.d_payload.substr(at + 6, 8), nullptr, 16));
     }
     return line;
 }
@@ -438,11 +438,10 @@ std::vector<Line> parsed(const LogFile& file)
 /// The number of lines of 'lines' that are not whole.
 std::size_t malformed(const std::vector<Line>& lines)
 {
-    return static_cast<std::size_t>(std::count_if(lines.begin(),
-                                                  lines.end(),
-                                                  [](const Line& line) {
-                                                      return !line.well_formed;
-                                                  }));
+    return static_cast<std::size_t>(
+        std::count_if(lines.begin(), lines.end(), [](const Line& line) {
+            return !line.d_well_formed;
+        }));
 }
 
 Error error_with(const std::uint32_t context)
@@ -475,8 +474,9 @@ std::vector<std::uint32_t> contexts_of(const std::vector<Line>& lines,
 {
     std::vector<std::uint32_t> result;
     for (const Line& line : lines) {
-        if (line.well_formed && line.has_context && line.thread == thread) {
-            result.push_back(line.context);
+        if (line.d_well_formed && line.d_has_context &&
+            line.d_thread == thread) {
+            result.push_back(line.d_context);
         }
     }
     return result;
@@ -541,8 +541,8 @@ TEST(CoreLog, OneThreadsRecordsAllComeOutWholeAndInOrder)
     ASSERT_EQ(lines.size(), k_COUNT);
     EXPECT_EQ(malformed(lines), 0U);
     for (const Line& line : lines) {
-        EXPECT_EQ(line.thread, "render");
-        EXPECT_EQ(line.severity, "WARN");
+        EXPECT_EQ(line.d_thread, "render");
+        EXPECT_EQ(line.d_severity, "WARN");
     }
     EXPECT_EQ(contexts_of(lines, "render"), sequence(0, k_COUNT));
 }
@@ -586,12 +586,12 @@ TEST(CoreLog, ErrorsAndMessagesShareOneStreamInOrder)
     EXPECT_EQ(malformed(lines), 0U);
     for (std::size_t i = 0; i < lines.size(); ++i) {
         if (i % 2 == 0) {
-            EXPECT_EQ(lines[i].severity, "INFO") << i;
-            EXPECT_TRUE(lines[i].has_context) << i;
-            EXPECT_EQ(lines[i].context, i / 2) << i;
+            EXPECT_EQ(lines[i].d_severity, "INFO") << i;
+            EXPECT_TRUE(lines[i].d_has_context) << i;
+            EXPECT_EQ(lines[i].d_context, i / 2) << i;
         } else {
-            EXPECT_EQ(lines[i].severity, "DEBUG") << i;
-            EXPECT_EQ(lines[i].payload, "core | unknown") << i;
+            EXPECT_EQ(lines[i].d_severity, "DEBUG") << i;
+            EXPECT_EQ(lines[i].d_payload, "core | unknown") << i;
         }
     }
 }
@@ -617,7 +617,7 @@ TEST(CoreLog, EverySeverityComesOutAsItsName)
     const char* const names[] =
         {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
     for (std::size_t i = 0; i < lines.size(); ++i) {
-        EXPECT_EQ(lines[i].severity, names[i]);
+        EXPECT_EQ(lines[i].d_severity, names[i]);
     }
 }
 
@@ -639,10 +639,10 @@ TEST(CoreLog, TimestampsNeverGoBackwardsOnOneThreadAndStartNearZero)
     const std::vector<Line> lines = parsed(file);
     ASSERT_EQ(lines.size(), 50U);
     for (std::size_t i = 1; i < lines.size(); ++i) {
-        EXPECT_GE(lines[i].microseconds, lines[i - 1].microseconds) << i;
+        EXPECT_GE(lines[i].d_microseconds, lines[i - 1].d_microseconds) << i;
     }
     // Seconds since the logger started: well under a minute for this test.
-    EXPECT_LT(lines.back().microseconds, 60U * 1'000'000U);
+    EXPECT_LT(lines.back().d_microseconds, 60U * 1'000'000U);
 }
 
 TEST(CoreLog, ThreadNamesAreCutToTheirColumnAndNeverRunIntoTheMessage)
@@ -681,9 +681,9 @@ TEST(CoreLog, ThreadNamesAreCutToTheirColumnAndNeverRunIntoTheMessage)
         "streamin",
     };
     for (std::size_t i = 0; i < lines.size(); ++i) {
-        EXPECT_EQ(lines[i].thread, shown[i]) << "name '" << names[i] << "'";
+        EXPECT_EQ(lines[i].d_thread, shown[i]) << "name '" << names[i] << "'";
         // The message starts in its own column, a space after the thread's.
-        EXPECT_EQ(lines[i].payload, "core | unknown")
+        EXPECT_EQ(lines[i].d_payload, "core | unknown")
             << "name '" << names[i] << "'";
     }
 }
@@ -717,17 +717,17 @@ TEST(CoreLog, ABatchOfManyThousandRecordsIsWrittenWholeWithNoLineSplit)
     std::uint32_t previous = 0;
     bool          first    = true;
     for (const Line& line : lines) {
-        if (line.thread == "logger") {
-            std::istringstream in(line.payload);
+        if (line.d_thread == "logger") {
+            std::istringstream in(line.d_payload);
             std::string        who;
             std::string        word;
             std::uint64_t      count = 0;
             in >> who >> word >> count;
             lost += count;
-        } else if (line.has_context) {
+        } else if (line.d_has_context) {
             ++seen;
-            EXPECT_TRUE(first || line.context > previous);
-            previous = line.context;
+            EXPECT_TRUE(first || line.d_context > previous);
+            previous = line.d_context;
             first    = false;
         }
     }
@@ -989,8 +989,8 @@ TEST(CoreLog, ThreadsComeAndGoThroughFewerSlotsThanThreads)
 
     std::map<std::uint32_t, std::vector<std::uint32_t>> seen;
     for (const Line& line : lines) {
-        if (line.has_context) {
-            seen[line.context >> 8U].push_back(line.context & 0xFFU);
+        if (line.d_has_context) {
+            seen[line.d_context >> 8U].push_back(line.d_context & 0xFFU);
         }
     }
     std::uint32_t wrong = 0;
@@ -1049,8 +1049,8 @@ TEST(CoreLog, ThreadsThatRegisterAtTheSameInstantEachGetTheirOwnSlot)
 
         std::map<std::uint32_t, std::vector<std::uint32_t>> seen;
         for (const Line& line : parsed(file)) {
-            if (line.has_context) {
-                seen[line.context >> 8U].push_back(line.context & 0xFFU);
+            if (line.d_has_context) {
+                seen[line.d_context >> 8U].push_back(line.d_context & 0xFFU);
             }
         }
         std::uint32_t wrong = 0;
@@ -1116,9 +1116,9 @@ TEST(CoreLog, ThreadsWithNoHandleLogThroughTheLockedPath)
     EXPECT_EQ(malformed(lines), 0U);
     std::map<std::uint32_t, std::vector<std::uint32_t>> per_thread;
     for (const Line& line : lines) {
-        EXPECT_EQ(line.thread, "shared");
-        EXPECT_EQ(line.severity, "ERROR");
-        per_thread[line.context >> 16U].push_back(line.context & 0xFFFFU);
+        EXPECT_EQ(line.d_thread, "shared");
+        EXPECT_EQ(line.d_severity, "ERROR");
+        per_thread[line.d_context >> 16U].push_back(line.d_context & 0xFFFFU);
     }
     // Each thread's own records are in the order it made them.
     for (std::uint32_t t = 0; t < k_THREADS; ++t) {
@@ -1143,8 +1143,8 @@ TEST(CoreLog, LockedMessagesComeOutAsMessagesNamedShared)
 
     const std::vector<Line> lines = parsed(file);
     ASSERT_EQ(lines.size(), 1U);
-    EXPECT_EQ(lines[0].thread, "shared");
-    EXPECT_EQ(lines[0].payload, "core | unknown");
+    EXPECT_EQ(lines[0].d_thread, "shared");
+    EXPECT_EQ(lines[0].d_payload, "core | unknown");
 }
 
 TEST(CoreLog, HandlesAndLockedCallsShareOneFile)
@@ -1445,11 +1445,11 @@ TEST(CoreLog, AFloodLosesRecordsButReportsExactlyHowManyAndKeepsTheRest)
     std::vector<std::uint32_t> kept;
     std::size_t                loss_lines = 0;
     for (const Line& line : lines) {
-        if (line.thread == "logger") {
+        if (line.d_thread == "logger") {
             // '<name> lost <count> records', from the logger itself.
             ++loss_lines;
-            EXPECT_EQ(line.severity, "WARN");
-            std::istringstream in(line.payload);
+            EXPECT_EQ(line.d_severity, "WARN");
+            std::istringstream in(line.d_payload);
             std::string        who;
             std::string        word;
             std::string        tail;
@@ -1460,9 +1460,9 @@ TEST(CoreLog, AFloodLosesRecordsButReportsExactlyHowManyAndKeepsTheRest)
             EXPECT_EQ(tail, "records");
             EXPECT_GT(count, 0U);
             lost += count;
-        } else if (line.has_context) {
-            EXPECT_EQ(line.thread, "render-t");
-            kept.push_back(line.context);
+        } else if (line.d_has_context) {
+            EXPECT_EQ(line.d_thread, "render-t");
+            kept.push_back(line.d_context);
         }
     }
 

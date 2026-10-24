@@ -66,7 +66,7 @@ using engine::core::spsc::SpscRingParameters;
 /// A trivially copyable record of 't_WORDS' 64-bit words, each one derived
 /// from the first, so that a record written half-way is detectable.
 template <std::size_t t_WORDS> struct Item {
-    std::array<std::uint64_t, t_WORDS> words;
+    std::array<std::uint64_t, t_WORDS> d_words;
 
     friend bool operator==(const Item&, const Item&) = default;
 };
@@ -75,8 +75,8 @@ template <std::size_t t_WORDS> struct Item {
 template <class t_ITEM> t_ITEM make_item(const std::uint64_t value)
 {
     t_ITEM item{};
-    for (std::size_t i = 0; i < item.words.size(); ++i) {
-        item.words[i] = value + (~value * i);
+    for (std::size_t i = 0; i < item.d_words.size(); ++i) {
+        item.d_words[i] = value + (~value * i);
     }
     return item;
 }
@@ -97,7 +97,7 @@ std::vector<t_ITEM> make_items(const std::uint64_t first,
 /// Return the value 'item' was made from.
 template <class t_ITEM> std::uint64_t value_of(const t_ITEM& item)
 {
-    return item.words[0];
+    return item.d_words[0];
 }
 
 /// A trivially copyable type with no default constructor, like 'Error'.
@@ -119,9 +119,9 @@ class Opaque {
 
 /// A trivially copyable type with padding between and after its members.
 struct Padded {
-    std::uint8_t  small;
-    std::uint64_t large;
-    std::uint16_t medium;
+    std::uint8_t  d_small;
+    std::uint64_t d_large;
+    std::uint16_t d_medium;
 };
 
 /// A small pseudo-random sequence that is the same on every run, so that a
@@ -559,14 +559,14 @@ TEST(CoreSpscRingTypes, HoldsATypeWithPadding)
 {
     const auto ring = std::make_unique<SpscRing<Padded, 4>>();
 
-    ASSERT_TRUE(
-        ring->try_push(Padded{.small = 7, .large = ~0ULL, .medium = 0xBEEF}));
+    ASSERT_TRUE(ring->try_push(
+        Padded{.d_small = 7, .d_large = ~0ULL, .d_medium = 0xBEEF}));
 
     const std::optional<Padded> item = ring->try_pop();
     ASSERT_TRUE(item.has_value());
-    EXPECT_EQ(item->small, 7U);
-    EXPECT_EQ(item->large, ~0ULL);
-    EXPECT_EQ(item->medium, 0xBEEFU);
+    EXPECT_EQ(item->d_small, 7U);
+    EXPECT_EQ(item->d_large, ~0ULL);
+    EXPECT_EQ(item->d_medium, 0xBEEFU);
 }
 
 TEST(CoreSpscRingTypes, HoldsOneByte)

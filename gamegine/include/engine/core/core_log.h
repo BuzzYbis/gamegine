@@ -250,8 +250,8 @@ class Logger final {
     /// whether it took a whole pass's worth of a live ring, which then may
     /// hold more.
     struct Taken {
-        Phase phase;
-        bool  full;
+        Phase d_phase;
+        bool  d_full;
     };
 
     /// This class is everything one registered thread owns: a ring, its phase,
@@ -609,14 +609,14 @@ inline bool Logger::drain() noexcept
         }
 
         const Taken taken = drain_one(*producer);
-        behind            = behind || taken.full;
-        if (taken.phase == Phase::e_CLOSED) {
+        behind            = behind || taken.d_full;
+        if (taken.d_phase == Phase::e_CLOSED) {
             std::unique_ptr<Producer> owner(producer);
             owner.reset();
             slot.store(nullptr, std::memory_order_release);
         }
     }
-    return drain_one(*d_shared_p).full || behind;
+    return drain_one(*d_shared_p).d_full || behind;
 }
 
 inline Logger::Taken Logger::drain_one(Producer& producer) noexcept

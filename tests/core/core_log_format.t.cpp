@@ -124,9 +124,9 @@ class Sequence {
 
 /// What a writer of a given capacity ended up with.
 struct Written {
-    std::string text;       // what it wrote
-    bool        truncated;  // whether it said it was cut
-    bool guard_intact;      // whether the bytes after the buffer are as left
+    std::string d_text;       // what it wrote
+    bool        d_truncated;  // whether it said it was cut
+    bool d_guard_intact;      // whether the bytes after the buffer are as left
 };
 
 /// Run 'append' on a writer over 'capacity' bytes, with guard bytes after
@@ -142,9 +142,9 @@ Written written_with(const std::size_t capacity, t_APPEND&& append)
     append(writer);
 
     Written result;
-    result.text         = std::string(writer.view());
-    result.truncated    = writer.is_truncated();
-    result.guard_intact = std::all_of(
+    result.d_text         = std::string(writer.view());
+    result.d_truncated    = writer.is_truncated();
+    result.d_guard_intact = std::all_of(
         buffer.begin() + static_cast<std::ptrdiff_t>(capacity),
         buffer.end(),
         [](const char c) { return c == k_GUARD; });
@@ -154,7 +154,7 @@ Written written_with(const std::size_t capacity, t_APPEND&& append)
 /// The line 'append' writes when there is room for any.
 template <class t_APPEND> std::string line_of(t_APPEND&& append)
 {
-    return written_with(k_ROOMY, append).text;
+    return written_with(k_ROOMY, append).d_text;
 }
 
 Error core_error(const std::uint32_t context)
@@ -286,10 +286,10 @@ constexpr std::array<std::string_view, 5> k_THREADS = {
 
 /// One random record, with what its line must say.
 struct Sample {
-    LogRecord   record;
-    bool        is_error;
-    std::string expected;  // the whole line, newline included
-    std::string thread;
+    LogRecord   d_record;
+    bool        d_is_error;
+    std::string d_expected;  // the whole line, newline included
+    std::string d_thread;
 };
 
 Sample random_sample(Sequence& random)
@@ -304,25 +304,25 @@ Sample random_sample(Sequence& random)
     const auto context = static_cast<std::uint32_t>(random.next());
 
     Sample sample;
-    sample.thread   = std::string(thread);
-    sample.is_error = (random.next() % 2U) == 0U;
-    if (sample.is_error) {
+    sample.d_thread   = std::string(thread);
+    sample.d_is_error = (random.next() % 2U) == 0U;
+    if (sample.d_is_error) {
         const Error error = (random.next() % 2U) == 0U ? core_error(context)
                                                        : vulkan_error(context);
-        sample.record     = error_record(static_cast<Severity>(severity),
+        sample.d_record   = error_record(static_cast<Severity>(severity),
                                          nanoseconds,
                                          error);
-        sample.expected = prefix_oracle(nanoseconds, severity, thread) + " " +
-                          error_text(error) + "\n";
+        sample.d_expected = prefix_oracle(nanoseconds, severity, thread) +
+                            " " + error_text(error) + "\n";
     } else {
         const LogMessage message = (random.next() % 2U) == 0U
                                        ? core_message()
                                        : vulkan_message();
-        sample.record   = message_record(static_cast<Severity>(severity),
-                                         nanoseconds,
-                                         message);
-        sample.expected = prefix_oracle(nanoseconds, severity, thread) + " " +
-                          message_text(message) + "\n";
+        sample.d_record   = message_record(static_cast<Severity>(severity),
+                                           nanoseconds,
+                                           message);
+        sample.d_expected = prefix_oracle(nanoseconds, severity, thread) +
+                            " " + message_text(message) + "\n";
     }
     return sample;
 }
@@ -401,8 +401,8 @@ TEST(CoreLogFormat, SeverityNameIsUsableInAConstantExpression)
 TEST(CoreLogFormat, TimestampIsSecondsAndMicroseconds)
 {
     struct Case {
-        std::uint64_t nanoseconds;
-        const char*   expected;
+        std::uint64_t d_nanoseconds;
+        const char*   d_expected_p;
     };
     const auto cases = std::to_array<Case>({
         {0, "[   0.000000]"},
@@ -416,8 +416,8 @@ TEST(CoreLogFormat, TimestampIsSecondsAndMicroseconds)
         {9'999 * k_SECOND, "[9999.000000]"},
     });
     for (const Case& c : cases) {
-        EXPECT_EQ(timestamp_line(ticks_at(c.nanoseconds)), c.expected)
-            << c.nanoseconds << " ns";
+        EXPECT_EQ(timestamp_line(ticks_at(c.d_nanoseconds)), c.d_expected_p)
+            << c.d_nanoseconds << " ns";
     }
 }
 
@@ -452,8 +452,8 @@ TEST(CoreLogFormat, ConvertsWithTheClockItIsGiven)
     // 24 ticks of Apple's clock are 1000 nanoseconds exactly, and 24 million
     // of them are a second: 125 / 3 nanoseconds a tick, not 1.
     struct Case {
-        std::uint64_t ticks;
-        const char*   expected;
+        std::uint64_t d_ticks;
+        const char*   d_expected_p;
     };
     const auto cases = std::to_array<Case>({
         {0, "[   0.000000]"},
@@ -464,8 +464,8 @@ TEST(CoreLogFormat, ConvertsWithTheClockItIsGiven)
         {std::uint64_t{24'000'000} * 3'600, "[3600.000000]"},
     });
     for (const Case& c : cases) {
-        EXPECT_EQ(timestamp_line(k_START + c.ticks, k_APPLE), c.expected)
-            << c.ticks << " ticks";
+        EXPECT_EQ(timestamp_line(k_START + c.d_ticks, k_APPLE), c.d_expected_p)
+            << c.d_ticks << " ticks";
     }
 }
 
@@ -569,7 +569,7 @@ TEST(CoreLogFormat, CuttingAThreadNameIsNotTruncation)
                                  "streaming-worker",
                                  k_NANOSECONDS);
     });
-    EXPECT_FALSE(written.truncated);
+    EXPECT_FALSE(written.d_truncated);
 }
 
 TEST(CoreLogFormat, ASeverityNoEnumeratorNamesIsAQuestionMarkInItsColumn)
@@ -741,15 +741,15 @@ TEST(CoreLogFormat, RecordsAppendedToOneWriterComeOutInOrder)
     std::string         expected;
     for (std::int32_t i = 0; i < 200; ++i) {
         samples.push_back(random_sample(random));
-        expected += samples.back().expected;
+        expected += samples.back().d_expected;
     }
 
     std::vector<char> buffer(expected.size() + 64);
     LineWriter        writer(buffer);
     for (const Sample& sample : samples) {
         LogFormat::append_record(writer,
-                                 sample.record,
-                                 sample.thread,
+                                 sample.d_record,
+                                 sample.d_thread,
                                  k_NANOSECONDS);
     }
 
@@ -775,13 +775,13 @@ TEST(CoreLogFormat, ARecordOfAnyTypeIsCutAtAnyCapacityAndNeverOverrun)
                                              "render",
                                              k_NANOSECONDS);
                 });
-            EXPECT_EQ(written.text, full.substr(0, capacity))
+            EXPECT_EQ(written.d_text, full.substr(0, capacity))
                 << "type " << static_cast<std::uint32_t>(record.type()) << ", "
                 << capacity;
-            EXPECT_EQ(written.truncated, capacity < full.size())
+            EXPECT_EQ(written.d_truncated, capacity < full.size())
                 << "type " << static_cast<std::uint32_t>(record.type()) << ", "
                 << capacity;
-            EXPECT_TRUE(written.guard_intact) << capacity;
+            EXPECT_TRUE(written.d_guard_intact) << capacity;
         }
     }
 }
@@ -791,9 +791,10 @@ TEST(CoreLogFormat, RecordAgreesWithStdFormatOnRandomRecords)
     Sequence random;
     for (std::int32_t i = 0; i < 20'000; ++i) {
         const Sample sample = random_sample(random);
-        ASSERT_EQ(record_line(sample.record, sample.thread), sample.expected)
+        ASSERT_EQ(record_line(sample.d_record, sample.d_thread),
+                  sample.d_expected)
             << "record " << i
-            << (sample.is_error ? " (an error)" : " (a message)");
+            << (sample.d_is_error ? " (an error)" : " (a message)");
     }
 }
 

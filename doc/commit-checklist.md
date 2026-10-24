@@ -76,7 +76,8 @@ described in [ci/README.md](../ci/README.md).
 - [ ] **Contracts.** Every function: "the specified [x]", "Optionally
       specify", "The behavior is undefined unless", "Return". Code in
       comments is marked `[like_this]`. Comments short.
-- [ ] **Names.** Constants `k_UPPER_CASE`, members `d_`, template
+- [ ] **Names.** Constants `k_UPPER_CASE`, data members `d_` (the public
+      data of a plain `struct` too) and static ones `s_`, template
       parameters `t_`, enumerators `e_`. A named constant over a bare number,
       and an enumeration over a `bool` argument.
 - [ ] **Tables.** Every table indexed by an enumeration has a

@@ -87,8 +87,8 @@ TEST(CoreTickConversion, IsExactAtEveryRatio)
     // a slow tick, a fast one, and both terms at their 32-bit maximum.
     constexpr std::uint32_t k_MAX = std::numeric_limits<std::uint32_t>::max();
     struct Ratio {
-        std::uint32_t numerator;
-        std::uint32_t denominator;
+        std::uint32_t d_numerator;
+        std::uint32_t d_denominator;
     };
     constexpr std::array ratios = {
         Ratio{1, 1},
@@ -102,12 +102,14 @@ TEST(CoreTickConversion, IsExactAtEveryRatio)
     };
 
     for (const Ratio& ratio : ratios) {
-        const TickConversion clock(1'000, ratio.numerator, ratio.denominator);
+        const TickConversion clock(1'000,
+                                   ratio.d_numerator,
+                                   ratio.d_denominator);
 
         // The largest elapsed tick count whose answer fits in 64 bits.
-        const Wide largest = ((k_UINT64_MAX * ratio.denominator) +
-                              ratio.denominator - 1) /
-                             ratio.numerator;
+        const Wide largest = ((k_UINT64_MAX * ratio.d_denominator) +
+                              ratio.d_denominator - 1) /
+                             ratio.d_numerator;
         const auto limit   = static_cast<std::uint64_t>(
             std::min(largest, k_UINT64_MAX - 1'000));
 
@@ -116,8 +118,8 @@ TEST(CoreTickConversion, IsExactAtEveryRatio)
         const std::array<std::uint64_t, 6> fixed = {
             0,
             1,
-            ratio.denominator - 1ULL,
-            ratio.denominator + 1ULL,
+            ratio.d_denominator - 1ULL,
+            ratio.d_denominator + 1ULL,
             limit - 1,
             limit,
         };
@@ -128,13 +130,16 @@ TEST(CoreTickConversion, IsExactAtEveryRatio)
             }
             ++checked;
             EXPECT_EQ(Wide{clock.ns_elapsed_since_start(1'000 + elapsed)},
-                      exact_ns(elapsed, ratio.numerator, ratio.denominator))
-                << ratio.numerator << "/" << ratio.denominator << ", elapsed "
-                << elapsed;
+                      exact_ns(elapsed,
+                               ratio.d_numerator,
+                               ratio.d_denominator))
+                << ratio.d_numerator << "/" << ratio.d_denominator
+                << ", elapsed " << elapsed;
         }
         // The ones above the limit are left out; most must remain, or the
         // loop would pass by checking nothing.
-        EXPECT_GE(checked, 4U) << ratio.numerator << "/" << ratio.denominator;
+        EXPECT_GE(checked, 4U)
+            << ratio.d_numerator << "/" << ratio.d_denominator;
 
         // Steps of 2^64 divided by the golden ratio land evenly over the
         // range without repeating, and the same counts every run, so a
@@ -145,9 +150,11 @@ TEST(CoreTickConversion, IsExactAtEveryRatio)
             const auto elapsed = static_cast<std::uint64_t>(Wide{spread} %
                                                             (Wide{limit} + 1));
             ASSERT_EQ(Wide{clock.ns_elapsed_since_start(1'000 + elapsed)},
-                      exact_ns(elapsed, ratio.numerator, ratio.denominator))
-                << ratio.numerator << "/" << ratio.denominator << ", elapsed "
-                << elapsed;
+                      exact_ns(elapsed,
+                               ratio.d_numerator,
+                               ratio.d_denominator))
+                << ratio.d_numerator << "/" << ratio.d_denominator
+                << ", elapsed " << elapsed;
         }
     }
 }

@@ -114,15 +114,15 @@ constexpr std::chrono::milliseconds k_PASS_INTERVAL{1};
 
 /// A trivially copyable value of 't_WORDS' 64-bit words.
 template <std::size_t t_WORDS> struct Item {
-    std::array<std::uint64_t, t_WORDS> words;
+    std::array<std::uint64_t, t_WORDS> d_words;
 };
 
 /// Return the item made from the specified 'value'.
 template <class t_ITEM> t_ITEM make_item(const std::uint64_t value)
 {
     t_ITEM item{};
-    for (std::size_t i = 0; i < item.words.size(); ++i) {
-        item.words[i] = value + i;
+    for (std::size_t i = 0; i < item.d_words.size(); ++i) {
+        item.d_words[i] = value + i;
     }
     return item;
 }
@@ -150,9 +150,9 @@ void prefer(const Core core)
 
 /// Where the producer and the consumer thread of a 'Transfer' run.
 struct Placement {
-    Core        producer;
-    Core        consumer;
-    const char* label;
+    Core        d_producer;
+    Core        d_consumer;
+    const char* d_label_p;
 };
 
 constexpr std::array<Placement, 3> k_PLACEMENTS = {
@@ -207,7 +207,7 @@ template <class t_ITEM> void push_pop_pair(benchmark::State& state)
             state.SkipWithError("a pop found nothing");
             return;
         }
-        checksum += popped->words[0];
+        checksum += popped->d_words[0];
     }
 
     // What came out must be what went in: the values 0, 1, 2, ... in turn.
@@ -240,7 +240,7 @@ template <class t_ITEM> void fill_then_drain(benchmark::State& state)
                 state.SkipWithError("a pop found nothing");
                 return;
             }
-            checksum += popped->words[0];
+            checksum += popped->d_words[0];
         }
     }
 
@@ -260,14 +260,14 @@ void transfer(benchmark::State& state)
 {
     const Placement& placement =
         k_PLACEMENTS[static_cast<std::size_t>(state.range(0))];
-    state.SetLabel(placement.label);
-    prefer(placement.consumer);
+    state.SetLabel(placement.d_label_p);
+    prefer(placement.d_consumer);
 
     const auto ring = std::make_unique<SpscRing<t_ITEM, k_CAPACITY>>();
 
     for ([[maybe_unused]] const auto _ : state) {
         std::thread producer([&ring, &placement] {
-            prefer(placement.producer);
+            prefer(placement.d_producer);
             for (std::uint64_t next = 0; next < k_TRANSFERRED;
                  next += t_BATCH) {
                 // Built once, then offered until the ring takes it.
@@ -289,7 +289,7 @@ void transfer(benchmark::State& state)
         for (std::uint64_t received = 0; received < k_TRANSFERRED;) {
             const std::optional<t_ITEM> item = ring->try_pop();
             if (item.has_value()) {
-                out_of_order += (item->words[0] != received) ? 1U : 0U;
+                out_of_order += (item->d_words[0] != received) ? 1U : 0U;
                 ++received;
             }
         }
@@ -316,8 +316,8 @@ using RecordRing = SpscRing<Record, k_CAPACITY>;
 
 /// What one pass over the rings found.
 struct Drained {
-    std::uint64_t popped;  // values taken out
-    std::uint64_t wrong;   // values that were not the next one of their ring
+    std::uint64_t d_popped;  // values taken out
+    std::uint64_t d_wrong;   // values that were not the next one of their ring
 };
 
 /// Return the specified 'count' rings, each on the heap as the ring wants.
@@ -348,11 +348,11 @@ Drained drain_once(const std::span<const std::unique_ptr<RecordRing>> rings,
                 break;
             }
             // Both words are checked, so half a record is not a record.
-            const bool right = record->words[0] == expected[i] &&
-                               record->words[1] == expected[i] + 1;
-            found.wrong += right ? 0U : 1U;
-            expected[i] = record->words[0] + 1;
-            ++found.popped;
+            const bool right = record->d_words[0] == expected[i] &&
+                               record->d_words[1] == expected[i] + 1;
+            found.d_wrong += right ? 0U : 1U;
+            expected[i] = record->d_words[0] + 1;
+            ++found.d_popped;
         }
     }
     return found;
@@ -408,12 +408,12 @@ void fan_in_spin(benchmark::State& state)
         const auto limit = std::chrono::steady_clock::now() + k_SPIN_TIMEOUT;
         while (popped < total) {
             const Drained found = drain_once(rings, expected);
-            popped += found.popped;
-            wrong += found.wrong;
+            popped += found.d_popped;
+            wrong += found.d_wrong;
 
             // The clock is read once in a long while, and only when nothing
             // came, so that waiting for a value costs what it costs.
-            idle = (found.popped == 0) ? idle + 1 : 0;
+            idle = (found.d_popped == 0) ? idle + 1 : 0;
             if (idle == (std::uint64_t{1} << 16U)) {
                 idle = 0;
                 if (std::chrono::steady_clock::now() > limit) {
@@ -445,8 +445,8 @@ void fan_in_spin(benchmark::State& state)
 /// What a producer thread of a 'FanInDrop' did: pushes the ring took, and
 /// pushes it refused.
 struct Tally {
-    std::uint64_t accepted;
-    std::uint64_t refused;
+    std::uint64_t d_accepted;
+    std::uint64_t d_refused;
 };
 
 void fan_in_drop(benchmark::State& state)
@@ -478,11 +478,11 @@ void fan_in_drop(benchmark::State& state)
                     // The value is the count of pushes accepted so far, so a
                     // value lost after it was accepted leaves a gap, while a
                     // refused push leaves none.
-                    const Record record = make_item<Record>(mine.accepted);
+                    const Record record = make_item<Record>(mine.d_accepted);
                     if (ring.try_push(record)) {
-                        ++mine.accepted;
+                        ++mine.d_accepted;
                     } else {
-                        ++mine.refused;
+                        ++mine.d_refused;
                     }
                 }
                 tally = mine;
@@ -495,8 +495,8 @@ void fan_in_drop(benchmark::State& state)
                                  k_DROP_DURATION;
         while (std::chrono::steady_clock::now() < deadline) {
             const Drained found = drain_once(rings, expected);
-            received += found.popped;
-            wrong += found.wrong;
+            received += found.d_popped;
+            wrong += found.d_wrong;
             ++passes;
             std::this_thread::sleep_for(k_PASS_INTERVAL);
         }
@@ -506,19 +506,19 @@ void fan_in_drop(benchmark::State& state)
         }
         threads.clear();
         // The producers are gone: what is left in the rings is all there is.
-        for (Drained found = drain_once(rings, expected); found.popped != 0;
+        for (Drained found = drain_once(rings, expected); found.d_popped != 0;
              found         = drain_once(rings, expected)) {
-            received += found.popped;
-            wrong += found.wrong;
+            received += found.d_popped;
+            wrong += found.d_wrong;
         }
 
         // Every push the rings accepted must have come out, and no other.
         std::uint64_t accepted = 0;
         std::uint64_t declined = 0;
         for (std::size_t p = 0; p < producers; ++p) {
-            wrong += (expected[p] == tallies[p].accepted) ? 0U : 1U;
-            accepted += tallies[p].accepted;
-            declined += tallies[p].refused;
+            wrong += (expected[p] == tallies[p].d_accepted) ? 0U : 1U;
+            accepted += tallies[p].d_accepted;
+            declined += tallies[p].d_refused;
         }
         if (wrong != 0 || received != accepted) {
             state.SkipWithError("accepted values were lost, repeated or "
