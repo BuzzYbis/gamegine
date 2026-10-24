@@ -14,6 +14,15 @@
 -- and the exact command that failed. It is never omitted, never defaulted and
 -- never filled in from a spec sheet.
 
+-- Every probe is bounded. A probe that can block forever can hang a nightly
+-- job forever, and ci.md section 2 requires jobs to be interruptible and to
+-- clean up. This is not hypothetical: 'glxinfo -B' blocks indefinitely when
+-- no display server answers, which is the normal state of a headless runner.
+--
+-- Ten seconds is far longer than any probe here legitimately needs; it exists
+-- to turn a hang into a reported UNAVAILABLE, not to race a slow machine.
+local DEFAULT_TIMEOUT_MS = 10000
+
 -- Return the first line of a possibly multi-line string, trimmed.
 function _firstline(text)
     if not text then
@@ -52,29 +61,36 @@ end
 --               only the first line.
 -- opt.accept    a table of exit codes to treat as success, default {0}.
 --               Some tools report a version and exit non-zero.
+-- opt.timeout   milliseconds before the child is killed, default 10000.
+-- opt.allow_empty  treat empty output as success rather than UNAVAILABLE.
 --
--- Never raises: a missing program or a non-zero exit becomes UNAVAILABLE.
+-- Never raises and never blocks indefinitely: a missing program, a non-zero
+-- exit, or a timeout all become UNAVAILABLE with the reason.
 function run(program, argv, opt)
     opt = opt or {}
     argv = argv or {}
     local source = command_string(program, argv)
 
+    local timeout = opt.timeout or DEFAULT_TIMEOUT_MS
     local outfile, errfile = os.tmpfile(), os.tmpfile()
     local code
+    local started = os.mclock()
     try
     {
         function ()
             code = os.execv(program, argv,
-                            {stdout = outfile, stderr = errfile, try = true})
+                            {stdout = outfile, stderr = errfile, try = true,
+                             timeout = timeout})
         end,
         catch
         {
-            function (errors)
+            function (_)
                 code = nil
             end
         }
     }
 
+    local elapsed = os.mclock() - started
     local out = io.readfile(outfile) or ""
     local err = io.readfile(errfile) or ""
     os.tryrm(outfile)
@@ -82,6 +98,21 @@ function run(program, argv, opt)
 
     if code == nil then
         return unavailable("program not found or not executable", source)
+    end
+
+    -- os.execv returns -1 when it killed the child at the timeout, and also
+    -- when a signal ended the child on its own (an abort, a crash). Only the
+    -- time says which, and what the command printed before it went is kept.
+    if code == -1 then
+        local reason
+        if elapsed >= timeout * 0.9 then
+            reason = ("timed out after %dms and was killed"):format(timeout)
+        else
+            reason = ("ended by a signal after %dms"):format(elapsed)
+        end
+        local record = unavailable(reason, source)
+        record.output = out .. err
+        return record
     end
 
     local accepted = false
@@ -96,7 +127,12 @@ function run(program, argv, opt)
         if detail == "" then
             detail = "no diagnostic output"
         end
-        return unavailable(("exit code %d: %s"):format(code, detail), source)
+        local record = unavailable(("exit code %d: %s"):format(code, detail),
+                                   source)
+        -- The first line is the reason; a caller that needs to show more of
+        -- what the command printed has all of it.
+        record.output = out .. err
+        return record
     end
 
     local text = out
@@ -112,7 +148,9 @@ function run(program, argv, opt)
         text = (text or ""):trim()
     end
 
-    if text == "" then
+    -- Silence is failure for a version probe and success for a linter, so
+    -- the caller decides. clang-tidy prints nothing when it finds nothing.
+    if text == "" and not opt.allow_empty then
         return unavailable("command succeeded but produced no output", source)
     end
     return ok(text, source)
@@ -136,15 +174,22 @@ function match(program, argv, pattern, opt)
 end
 
 -- Read a file and return its trimmed first line as a record.
-function readfile(path, description)
+--
+-- Through 'cat', not io.readfile: xmake's io.readfile never returns on a
+-- sysfs file, which reports a 4096-byte size for a few bytes of content.
+-- That hung every Linux capture on GitHub's runners, whose DMI files exist.
+function readfile(path)
     if not os.isfile(path) then
         return unavailable("file does not exist", path)
     end
-    local text = io.readfile(path)
-    if not text or text:trim() == "" then
+    local record = run("cat", {path}, {allow_empty = true})
+    if record.status ~= "OK" then
+        return unavailable(record.reason, path)
+    end
+    if record.value == "" then
         return unavailable("file is empty", path)
     end
-    return ok(_firstline(text), path)
+    return ok(record.value, path)
 end
 
 -- True when the record carries a usable value.

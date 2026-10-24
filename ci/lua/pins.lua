@@ -23,8 +23,9 @@ function _release_index(id)
     return nil
 end
 
--- Read ci/pins.json.
-function load(pinsfile)
+-- Read ci/pins.json. Named 'read' rather than 'load' so it cannot be
+-- mistaken for Lua's own 'load', which the sandbox does not provide.
+function read(pinsfile)
     pinsfile = pinsfile or path.join(os.projectdir(), "ci", "pins.json")
     if not os.isfile(pinsfile) then
         raise("pins file not found: %s", pinsfile)
@@ -108,7 +109,7 @@ end
 -- disagrees with the machine fails everywhere, always.
 function verify(opt)
     opt = opt or {}
-    local pins, pinsfile = load(opt.pinsfile)
+    local pins, pinsfile = read(opt.pinsfile)
     local release = opt.release or pins.release
     local due = _release_index(release) or 1
 

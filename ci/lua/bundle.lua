@@ -40,7 +40,9 @@ local REQUIRED_DIRS = {
     {path = "logs",        why = "run logs"},
 }
 
--- Extra evidence required by specific gates.
+-- Extra evidence required by a gate run. These belong to the T3 gate bundle
+-- (r0-benchmarks.md section 6 names results/B0-L and results/B0-A), not to
+-- every nightly T1 run that happens to carry the same benchmark id.
 local GATE_EXTRAS = {
     B0 = {
         {path = "reference-run.json",
@@ -133,7 +135,7 @@ function validate(dir, opt)
         }
     end
 
-    if gate and GATE_EXTRAS[gate] then
+    if gate and GATE_EXTRAS[gate] and manifest and manifest.tier == "T3" then
         for _, entry in ipairs(GATE_EXTRAS[gate]) do
             if not os.isfile(path.join(dir, entry.path)) then
                 table.insert(findings,

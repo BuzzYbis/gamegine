@@ -10,7 +10,14 @@ set_version("0.1.0")
 set_description("A Game Engine using Vulkan and C++23")
 
 set_languages("cxx23")
-add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
+
+-- 'lsp = "clangd"' keeps third-party headers (gtest, the Vulkan SDK,
+-- fastgltf...) as '-isystem' in compile_commands.json, as the build uses
+-- them. Without it xmake writes them as '-I', for editors that cannot read
+-- '-isystem', and clang-tidy then reports gtest's own macros -- every
+-- EXPECT_DEATH -- as findings in our tests. clangd reads '-isystem'.
+add_rules("plugin.compile_commands.autoupdate",
+          {outputdir = ".", lsp = "clangd"})
 
 add_rules("mode.debug", "mode.release")
 
@@ -79,6 +86,12 @@ end
 -- =============================================================================
 -- Compiler Flags
 
+-- The 'tools' filter below names the compiler by xmake's tool name, and
+-- xmake calls 'g++' "gxx", not "gcc": without "gxx" the filter silently drops
+-- every flag of these rules under GCC, and a Linux build runs with no
+-- warnings, no -Werror and exceptions enabled. "clang" already matches
+-- 'clang++'; xmake trims the "xx" before comparing.
+
 rule("gamegine.warnings")
     on_load(function (target)
         target:add("cxxflags",
@@ -89,7 +102,7 @@ rule("gamegine.warnings")
             -- Enforce strict ISO C++ compliance and reject non-standard extensions.
             "-Wpedantic",
             -- Warn when a variable shadows another variable in an outer scope.
-            "-Wshadow",  
+            "-Wshadow",
             -- Warn if a class with virtual functions lacks a virtual destructor.
             "-Wnon-virtual-dtor",
             -- Warn on C-style casts in C++.
@@ -97,15 +110,41 @@ rule("gamegine.warnings")
             -- Warn when pointer casting increases required memory alignment.
             "-Wcast-align",
             -- Warn on unused variables, functions, parameters, or expressions.
-            "-Wunused", 
+            "-Wunused",
             -- Warn when a function hides a virtual function from a base class.
             "-Woverloaded-virtual",
             -- Warn on implicit type conversions that may alter values or lose precision.
             "-Wconversion",
             -- Warn on implicit conversions between signed and unsigned types.
             "-Wsign-conversion",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
         )
+        -- xmake keeps the flags of Objective-C++ (.mm) apart from those of
+        -- C++: without this line the .mm files of platform/ build with none
+        -- of the warnings above.
+        target:add("mxxflags",
+            "-Wall", "-Wextra", "-Wpedantic", "-Wshadow",
+            "-Wnon-virtual-dtor", "-Wold-style-cast", "-Wcast-align",
+            "-Wunused", "-Woverloaded-virtual", "-Wconversion",
+            "-Wsign-conversion",
+            {tools = {"clang", "apple_clang"}}
+        )
+    end)
+rule_end()
+
+-- D9: errors are values. First-party code neither throws nor catches, and
+-- '-fno-exceptions' makes that a compile error rather than a convention. The
+-- dependencies were checked before this was adopted: fastgltf guards its one
+-- 'raise()' on __cpp_exceptions, meshoptimizer is a C API, and GoogleTest
+-- builds with GTEST_HAS_EXCEPTIONS=0 (losing only EXPECT_THROW, which a
+-- project that never throws has no use for).
+rule("gamegine.no_exceptions")
+    on_load(function (target)
+        target:add("cxxflags", "-fno-exceptions",
+                   {tools = {"clang", "gcc", "gxx", "apple_clang"}})
+        target:add("mxxflags", "-fno-exceptions",
+                   {tools = {"clang", "apple_clang"}})
+        target:add("defines", "GTEST_HAS_EXCEPTIONS=0")
     end)
 rule_end()
 
@@ -114,8 +153,9 @@ rule("gamegine.werror")
         target:add("cxxflags",
             -- Treat all warnings as compilation errors.
             "-Werror",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
         )
+        target:add("mxxflags", "-Werror", {tools = {"clang", "apple_clang"}})
     end)
 rule_end()
 
@@ -140,6 +180,13 @@ add_requires("gtest", {configs = {main = true}})
 -- Google Benchmark framework
 add_requires("benchmark")
 
+-- Window and events (platform/). Behind engine::platform::Window, so no GLFW
+-- header leaks into ours. Linux builds the X11 backend, which also serves a
+-- Wayland desktop through XWayland; the package's 'wayland' config builds
+-- Wayland from source, and is switched on when Profile L needs it, with the
+-- NativeSurface::Kind::e_WAYLAND the interface already reserves.
+add_requires("glfw 3.4")
+
 -- Mesh optimization: clusterization, simplification and codecs (D0).
 -- Pinned to an exact commit because clusterlod.h needs APIs that no release
 -- carries yet; see xmake/packages/m/meshoptimizer/xmake.lua for why.
@@ -150,18 +197,62 @@ add_requires("meshoptimizer 7d8eca58818927c6b2dbcdd44763f95b798d4232")
 -- Target: Gamegine (Static Library)
 
 target("gamegine")
-    set_kind("static")
-    add_rules("gamegine.warnings", "gamegine.werror")
+    -- The library is static once it has translation units. Until then it is
+    -- header-only: 'ar' cannot archive zero objects, and the first components
+    -- (core_error.h) are header-only by design. This lets the tests build and
+    -- run against headers before the first .cpp lands, instead of the test
+    -- environment being unprovable until then.
+    local has_sources = #os.files(path.join(os.scriptdir(),
+                                           "gamegine/src/**.cpp")) > 0
+    local has_objcxx = is_plat("macosx") and
+                       #os.files(path.join(os.scriptdir(),
+                                           "gamegine/src/**.mm")) > 0
+    if has_sources or has_objcxx then
+        set_kind("static")
+    else
+        set_kind("headeronly")
+    end
+
+    add_rules("gamegine.warnings", "gamegine.werror", "gamegine.no_exceptions")
 
     -- Include directories & headers
     add_includedirs("gamegine/include", {public = true})
     add_headerfiles("gamegine/include/(engine/**.h)")
 
-    -- Source files
-    add_files("gamegine/src/**.cpp")
+    -- Source files. The suffix conventions are:
+    --
+    --   <component>.cpp     library source
+    --   <component>.t.cpp   unit test
+    --   <component>.b.cpp   benchmark
+    --   <component>.m.cpp   an executable's main
+    --
+    -- so a test or benchmark sitting beside its component is never archived
+    -- into the library by accident.
+    --
+    -- Guarded for the same reason as the kind above: xmake warns on a
+    -- pattern that matches nothing, and a warning that is expected is a
+    -- warning people learn to ignore.
+    if has_sources then
+        add_files("gamegine/src/**.cpp")
+        for _, pattern in ipairs({"gamegine/src/**.t.cpp",
+                                  "gamegine/src/**.b.cpp",
+                                  "gamegine/src/**.m.cpp"}) do
+            if #os.files(path.join(os.scriptdir(), pattern)) > 0 then
+                remove_files(pattern)
+            end
+        end
+    end
+
+    -- Objective-C++ (AppKit and Metal are Objective-C), macOS only, with
+    -- automatic reference counting. A '.mm' is a source like a '.cpp'; the
+    -- same suffix conventions apply.
+    if has_objcxx then
+        add_files("gamegine/src/**.mm")
+        add_mxxflags("-fobjc-arc")
+    end
 
     -- Dependencies
-    add_packages("vulkansdk", "fastgltf", "meshoptimizer", {public = true})
+    add_packages("vulkansdk", "fastgltf", "meshoptimizer", "glfw", {public = true})
 
     -- clusterlod.h is a single header vendored from the upstream demo/
     -- directory at the same commit as meshoptimizer. It is integrated, not
@@ -197,13 +288,21 @@ target("gamegine")
 target("tests")
     set_kind("binary")
     set_default(false)
-    add_rules("gamegine.warnings")
+    add_rules("gamegine.warnings", "gamegine.no_exceptions")
 
     -- Engine dependency
     add_deps("gamegine")
 
-    -- Test sources
-    add_files("tests/**.cpp")
+    -- Test sources: '.t.cpp' only, wherever they live. A '.cpp' in the test
+    -- tree that is not a test is a mistake, and compiling it anyway hides it.
+    -- Each pattern is guarded on its own: xmake warns for any pattern that
+    -- matches nothing, and colocated tests may exist before the tests tree
+    -- does, or the other way round.
+    for _, pattern in ipairs({"tests/**.t.cpp", "gamegine/src/**.t.cpp"}) do
+        if #os.files(path.join(os.scriptdir(), pattern)) > 0 then
+            add_files(pattern)
+        end
+    end
 
     -- Google Test dependency
     add_packages("gtest")
@@ -218,13 +317,18 @@ target("tests")
 target("benchmarks")
     set_kind("binary")
     set_default(false)
-    add_rules("gamegine.warnings", "gamegine.werror")
+    add_rules("gamegine.warnings", "gamegine.werror", "gamegine.no_exceptions")
 
     -- Engine dependency
     add_deps("gamegine")
 
-    -- Benchmark sources
-    add_files("benchmarks/**.cpp")
+    -- Benchmark sources: '.b.cpp' only.
+    for _, pattern in ipairs({"benchmarks/**.b.cpp",
+                              "gamegine/src/**.b.cpp"}) do
+        if #os.files(path.join(os.scriptdir(), pattern)) > 0 then
+            add_files(pattern)
+        end
+    end
 
     -- Google Benchmark dependency
     add_packages("benchmark")
@@ -263,7 +367,7 @@ target("imgui")
 -- declare add_deps("sample-models").
 
 rule("gamegine.sample_models")
-    before_build(function (target)
+    before_build(function (_)
         import("lib.detect.find_tool")
 
         -- Archives to fetch: <file name> = <direct download url>

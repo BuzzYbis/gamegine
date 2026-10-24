@@ -21,8 +21,72 @@ This file is the single source of truth for the platform contract, memory budget
 | **D6b** | **Visibility target topology.** Arises only if D6 says yes; shared 64-bit atomic target is the default, separate-attachment merge the fallback | Deferred by design |
 | **D7** | **Every sizing number derives from what a capability claim requires as proof.** 1 GiB normal pool; Zorah as the committed corpus at two densities — 9.5 GiB demo at 9:1, 48.6 GiB full scene at 48:1 | Taken |
 | **D8** | **Geometry from the Zorah export; materials from a separate UV- and tangent-equipped fixture.** A procedural generator is optional work, priced separately | Taken |
+| **D9** | **Errors are values.** Every fallible operation returns `std::expected`; the host code neither throws nor catches, and builds with `-fno-exceptions` | Taken |
 
 **Deferred by design is not undecided.** D6 and D6b have one decision point (the R2 histogram), one default (do not build it; publish the measurement) and nothing downstream blocking on them — the engine is correct and complete with a single hardware raster path. They are reopened at R2 and nowhere else.
+
+### D9 — errors are values
+
+Every fallible operation returns `std::expected<T, core::Error>`. First-party
+code does not throw, does not catch, and compiles with `-fno-exceptions`.
+
+**Why.** The paths that matter most here are the ones where an exception is
+least welcome. Streaming publishes and evicts pages while readers are live;
+the cooker runs against a measured memory limit (D4); page decode sits in the
+frame. In each, a failure is an expected outcome with a recovery — reject the
+page, fall back to the parent LOD, retry the read — not an exceptional one.
+Errors-as-values puts that recovery in the signature where a reviewer can see
+it, and `-fno-exceptions` makes "I forgot to handle it" a compile error rather
+than a stack unwind through a half-published page table.
+
+**Verified before adoption**, because `-fno-exceptions` is only worth having
+if the dependencies allow it:
+
+| Dependency | Position |
+| --- | --- |
+| `fastgltf` | Ships its own `Expected<T>`; its single `raise()` is guarded on `__cpp_exceptions` and falls back to `abort()` |
+| `meshoptimizer`, `clusterlod.h` | C API, no exceptions |
+| GoogleTest | Builds with `GTEST_HAS_EXCEPTIONS=0`; only `EXPECT_THROW` is lost, which this project has no use for |
+
+**Consequences, accepted deliberately.**
+
+*A constructor cannot return a value.* Any type whose construction can fail
+exposes a static factory returning `std::expected`, and keeps its constructor
+private and non-failing. This applies to most of `platform/` and every RHI
+resource.
+
+*Allocation failure terminates.* Under `-fno-exceptions` a `std::bad_alloc`
+becomes `abort()` rather than an unwind. For an engine whose budgets are hard
+caps (D7) and whose admission is against a measured limit (D4), terminating on
+an allocation nobody budgeted for is the honest outcome; the alternative is
+unwinding into a state the memory accounting no longer describes.
+
+*Errors carry no heap.* `core::Error` is a single 64-bit value: an 8-bit
+domain, an 8-bit kind, a 16-bit domain-specific reason and a 32-bit numeric
+context. It allocates nothing, so returning one is safe on the paths that are
+failing precisely because memory is short, and it is trivially copyable, so it
+is returned in a register and copied into the logger's ring by `memcpy`.
+
+*An error records no source location.* Carrying a `std::source_location`
+would double or quadruple the log record — 8 bytes on libc++, around 24 on
+libstdc++ — for information a sufficiently specific reason enumerator already
+conveys, and more usefully: `e_SWAPCHAIN_ACQUIRE_TIMEOUT` survives a
+refactor, reads without a lookup table, and is greppable, where a file and
+line do none of those. Two consequences follow, and both are deliberate:
+
+- **Reason enumerators must be granular.** They are now the only thing
+  identifying where a failure came from. A reason used in forty places says
+  nothing, so the budget exists to avoid that: 16 bits is 65,536 reasons per
+  domain, which is more than one per failure site the engine will ever have.
+  `e_UNKNOWN` surviving in a log is a defect to fix, not a value to accept.
+- **The 32-bit context stays free for a payload.** A page id, a byte offset
+  or a cluster index identifies a failure more precisely than a line number
+  does, and cannot be reconstructed from anywhere else.
+
+It also removes a coupling that would otherwise have been load-bearing: a
+location captured in the logger is only correct if errors are logged where
+they are created, which in turn forces a policy about propagating without
+re-logging. With no location to capture, propagation is free to be silent.
 
 ### D0 — what this project is for
 
@@ -188,7 +252,8 @@ flowchart TD
 | [`clusterlod.h`](https://github.com/zeux/meshoptimizer/blob/master/demo/clusterlod.h) | MIT, single header | Cluster-group DAG build. Configure, feed a mesh, receive groups of clusters via callback |
 | [Slang](https://github.com/shader-slang/slang) | MIT | Shader source to SPIR-V and MSL |
 | Physics library | — | Character controller and collision proxies |
-| Window and input, image codecs, CMake | — | |
+| [GLFW](https://www.glfw.org/) 3.4 | zlib | Window, events, cursor, native handles, behind `engine::platform::Window`: no GLFW header is in ours. X11 on Linux (also serves Wayland desktops through XWayland); native Wayland and AppKit stay possible behind the same interface |
+| Image codecs, CMake | — | |
 
 Versions and commits are pinned and recorded in every manifest. `clusterlod.h`'s API is explicitly evolving upstream, so a version bump is treated as a content format change requiring a re-cook and a named new baseline.
 
