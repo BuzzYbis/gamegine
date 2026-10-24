@@ -177,10 +177,11 @@ class SinkFile {
                    : 0U;
     }
 
-    /// Empty the file, so that runs do not pile up on the disk.
-    void empty() const
+    /// Empty the file, so that runs do not pile up on the disk, and say
+    /// whether it worked.
+    [[nodiscard]] bool empty() const
     {
-        (void)::ftruncate(d_fd, 0);
+        return ::ftruncate(d_fd, 0) == 0;
     }
 
     [[nodiscard]] const std::string& path() const
@@ -333,7 +334,7 @@ bool account(benchmark::State&   state,
              Totals&             totals)
 {
     const Tally tally = read_back(file);
-    file.empty();
+    (void)file.empty();  // only the disk use depends on it
     if (tally.malformed != 0) {
         state.SkipWithError("the file holds a line that is not whole");
         return false;

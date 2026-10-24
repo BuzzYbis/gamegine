@@ -907,7 +907,7 @@ TEST(CoreLog, ThreadsComeAndGoThroughFewerSlotsThanThreads)
             std::this_thread::yield();
         }
 
-        auto lifetime = [&logger](const std::uint32_t id) {
+        const auto lifetime = [&logger](const std::uint32_t id) {
             // Every slot may be taken by threads that finished and are not
             // freed yet: wait for one.
             std::optional<Result<Logger::Handle>> handle;
@@ -1259,6 +1259,12 @@ constexpr double k_RESTING_CAP =
 /// formats a second.
 std::string reason_to_skip(double& formats)
 {
+    // The flooding thread, the logger thread and the rest of the machine.
+    if (std::thread::hardware_concurrency() < 3) {
+        return "fewer than 3 hardware threads: the two busy threads would "
+               "share them with everything else";
+    }
+
     prefer_fast_cores();
     formats = lines_formatted_per_second();
     if (formats >= 2.0 * k_RESTING_CAP) {
@@ -1297,6 +1303,27 @@ template <class t_FLOOD> double lines_written_per_second(t_FLOOD flood)
     return static_cast<double>(count_record_lines(file.path())) / seconds;
 }
 
+/// The rate a flood must pass: more than a logger that rests can write.
+constexpr double k_PASS_RATE = 1.25 * k_RESTING_CAP;
+
+/// Run 'flood' as [lines_written_per_second] does, until one run passes or
+/// five have failed, and return the best rate. A logger that rests can never
+/// pass, whatever the machine does, so a second try cannot hide it; a busy
+/// machine that takes the cores of the two busy threads for a while can fail
+/// a run, and not often five.
+template <class t_FLOOD> double best_rate_of(t_FLOOD flood)
+{
+    constexpr std::uint32_t k_ATTEMPTS = 5;
+
+    double best = 0.0;
+    for (std::uint32_t attempt = 0;
+         attempt < k_ATTEMPTS && best <= k_PASS_RATE;
+         ++attempt) {
+        best = std::max(best, lines_written_per_second(flood));
+    }
+    return best;
+}
+
 TEST(CoreLog, ALoggerThatIsBehindDoesNotRestBetweenPasses)
 {
     // A thread that floods keeps its ring full, so the logger is behind and
@@ -1308,21 +1335,21 @@ TEST(CoreLog, ALoggerThatIsBehindDoesNotRestBetweenPasses)
         GTEST_SKIP() << skip;
     }
 
-    const double rate = lines_written_per_second(
-        [](Logger& logger, const std::atomic<bool>& stop) {
-            Result<Logger::Handle> handle = logger.register_current_thread(
-                "flood");
-            if (!handle) {
-                return;
+    const double rate = best_rate_of([](Logger&                  logger,
+                                        const std::atomic<bool>& stop) {
+        Result<Logger::Handle> handle = logger.register_current_thread(
+            "flood");
+        if (!handle) {
+            return;
+        }
+        for (std::uint32_t i = 0; !stop.load(std::memory_order_relaxed);) {
+            for (std::uint32_t n = 0; n < 256; ++n, ++i) {
+                handle->log_error(Severity::e_TRACE, error_with(i));
             }
-            for (std::uint32_t i = 0; !stop.load(std::memory_order_relaxed);) {
-                for (std::uint32_t n = 0; n < 256; ++n, ++i) {
-                    handle->log_error(Severity::e_TRACE, error_with(i));
-                }
-            }
-        });
+        }
+    });
 
-    EXPECT_GT(rate, 1.25 * k_RESTING_CAP)
+    EXPECT_GT(rate, k_PASS_RATE)
         << "the logger wrote " << rate / 1e6 << " M lines a second from a "
         << "thread that floods it, and formats " << formats / 1e6 << " M: "
         << "it is resting between passes while a ring is full";
@@ -1338,16 +1365,16 @@ TEST(CoreLog, AFloodThroughTheLockedPathIsNotHeldToOneRingAPass)
         GTEST_SKIP() << skip;
     }
 
-    const double rate = lines_written_per_second(
-        [](Logger& logger, const std::atomic<bool>& stop) {
-            for (std::uint32_t i = 0; !stop.load(std::memory_order_relaxed);) {
-                for (std::uint32_t n = 0; n < 256; ++n, ++i) {
-                    logger.log_error_locked(Severity::e_TRACE, error_with(i));
-                }
+    const double rate = best_rate_of([](Logger&                  logger,
+                                        const std::atomic<bool>& stop) {
+        for (std::uint32_t i = 0; !stop.load(std::memory_order_relaxed);) {
+            for (std::uint32_t n = 0; n < 256; ++n, ++i) {
+                logger.log_error_locked(Severity::e_TRACE, error_with(i));
             }
-        });
+        }
+    });
 
-    EXPECT_GT(rate, 1.25 * k_RESTING_CAP)
+    EXPECT_GT(rate, k_PASS_RATE)
         << "the logger wrote " << rate / 1e6 << " M lines a second from a "
         << "thread that floods the locked path, and formats " << formats / 1e6
         << " M: it is resting between passes while the shared ring is full";

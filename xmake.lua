@@ -86,6 +86,12 @@ end
 -- =============================================================================
 -- Compiler Flags
 
+-- The 'tools' filter below names the compiler by xmake's tool name, and
+-- xmake calls 'g++' "gxx", not "gcc": without "gxx" the filter silently drops
+-- every flag of these rules under GCC, and a Linux build runs with no
+-- warnings, no -Werror and exceptions enabled. "clang" already matches
+-- 'clang++'; xmake trims the "xx" before comparing.
+
 rule("gamegine.warnings")
     on_load(function (target)
         target:add("cxxflags",
@@ -111,7 +117,7 @@ rule("gamegine.warnings")
             "-Wconversion",
             -- Warn on implicit conversions between signed and unsigned types.
             "-Wsign-conversion",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
         )
     end)
 rule_end()
@@ -125,7 +131,7 @@ rule_end()
 rule("gamegine.no_exceptions")
     on_load(function (target)
         target:add("cxxflags", "-fno-exceptions",
-                   {tools = {"clang", "gcc", "apple_clang"}})
+                   {tools = {"clang", "gcc", "gxx", "apple_clang"}})
         target:add("defines", "GTEST_HAS_EXCEPTIONS=0")
     end)
 rule_end()
@@ -135,7 +141,7 @@ rule("gamegine.werror")
         target:add("cxxflags",
             -- Treat all warnings as compilation errors.
             "-Werror",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
         )
     end)
 rule_end()

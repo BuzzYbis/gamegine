@@ -169,7 +169,7 @@ inline std::uint64_t Clock::now() noexcept
     timespec ts{};
     (void)::clock_gettime(CLOCK_MONOTONIC, &ts);
 
-    return static_cast<std::uint64_t>(ts.tv_sec) * k_NS_PER_SECOND +
+    return (static_cast<std::uint64_t>(ts.tv_sec) * k_NS_PER_SECOND) +
            static_cast<std::uint64_t>(ts.tv_nsec);
 #else
     return static_cast<std::uint64_t>(

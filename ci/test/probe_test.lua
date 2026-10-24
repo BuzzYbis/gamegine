@@ -56,6 +56,15 @@ function run(t)
     testing.equal(t, "a matching pattern returns the capture", matched.value,
                   "42")
 
+    -- A sysfs file reports 4096 bytes for a few bytes of content, which
+    -- made io.readfile block forever: a regression hangs here until the
+    -- job's timeout. Only Linux has one to read.
+    local sysfs = "/sys/devices/system/cpu/online"
+    if os.isfile(sysfs) then
+        testing.equal(t, "a sysfs file is read",
+                      probe.readfile(sysfs).status, "OK")
+    end
+
     testing.check(t, "available() is false for UNAVAILABLE",
                   not probe.available(missing))
     testing.check(t, "available() is true for OK", probe.available(matched))

@@ -11,6 +11,13 @@
 # Apple's toolchain *accepting* that text are different checks, and only the
 # second proves the shader will load on Profile A.
 #
+# The CI tooling's own tests and the benchmark harness are not here: they test
+# the tooling, not the engine, and run in tooling.yml when ci/ changes, every
+# night, and on demand.
+#
+# Every job has a timeout. A hang on a hosted runner otherwise holds it for six
+# hours, and this workflow's target is five minutes.
+#
 # Jobs whose inputs do not exist yet do not silently pass. They print what is
 # missing and what will make them real, because "silent skips are how a
 # backend quietly stops being tested" (ci.md section 4).
@@ -39,6 +46,7 @@ jobs:
   inventory:
     name: inventory
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       has_cpp: ${{ steps.take.outputs.has_cpp }}
       has_headers: ${{ steps.take.outputs.has_headers }}
@@ -70,6 +78,7 @@ jobs:
   format:
     name: format and lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -93,80 +102,13 @@ jobs:
       - name: Check the CI Lua for dead code
         run: xmake ci-lua
 
-  # CPU fixtures. At R0 these are the CI tooling's own tests -- parsers and
-  # validators that run on machines nobody is watching. The math test vectors,
-  # quantization round-trips and cut-validity tests join them as they land.
-  # No GPU, no engine, so they run on every push.
-  tests:
-    name: CPU fixtures (CI tooling)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: '3.1.1'
-      - name: Run the CI tooling tests
-        run: xmake ci-test
-
-  # The harness, end to end, on every push: capture the machine manifest,
-  # emit a T1 bundle, and validate its layout. No GPU and no engine needed --
-  # at R0 every fixture reports NOT_RUN with its reason, which is exactly what
-  # should be asserted. A harness that stops producing valid bundles is found
-  # here, not at a release boundary when the bundle is the evidence.
-  #
-  # This is also the only place ci-machine and ci-bundle run in CI.
-  harness:
-    name: benchmark harness (T1)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: '3.1.1'
-
-      - name: Capture the machine manifest
-        run: xmake ci-machine -o "machine-${{ matrix.os }}.json"
-
-      - name: Emit a T1 bundle
-        run: xmake bench --tier=T1 --out="results/ci/${{ github.sha }}" --no-power
-
-      - name: Validate the bundle layout
-        run: xmake ci-bundle "results/ci/${{ github.sha }}"
-
-      # A hosted runner is not in ci/machines.json, so it must resolve to
-      # 'development' and its bundle must not claim to be evidence. If that
-      # ever inverts, a cloud run could be archived behind a published claim.
-      - name: Assert a cloud runner produces no evidence
-        shell: bash
-        run: |
-          manifest="results/ci/${{ github.sha }}/manifest.json"
-          role=$(grep -o '"machine_role":"[^"]*"' "$manifest" | cut -d'"' -f4)
-          eligible=$(grep -o '"evidence_eligible":[a-z]*' "$manifest" | cut -d: -f2)
-          echo "machine_role=$role evidence_eligible=$eligible"
-          if [ "$role" != "development" ] || [ "$eligible" != "false" ]; then
-            echo "::error title=Cloud runner claimed evidence eligibility::A hosted runner is not qualification hardware. It must resolve to 'development' with evidence_eligible=false, or mock runs can be archived as evidence."
-            exit 1
-          fi
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: bundle-${{ matrix.os }}
-          path: |
-            results/ci/${{ github.sha }}
-            machine-${{ matrix.os }}.json
-          retention-days: 14
-
   # Every benchmark and cooker manifest validates against the schema.
   # The committed examples are validated too: they are the tripwire for an
   # incompatible edit to a contract frozen at R0.
   schema:
     name: manifest schema
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -201,6 +143,7 @@ jobs:
     name: pinned inputs (B0.4)
     needs: inventory
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -218,6 +161,7 @@ jobs:
     name: host build (${{ matrix.os }}, ${{ matrix.mode }})
     needs: inventory
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -296,10 +240,19 @@ jobs:
       # 3. It runs here because clang-tidy needs compile_commands.json, which
       # only exists after a build. Linux only: the findings are the same on
       # both platforms and there is no reason to pay for them twice.
+      # clang-tidy from pip, 23 like the clang-format of the format job and the
+      # LLVM the sources are checked with at the desk. Ubuntu's apt package is
+      # 18, which cannot parse <expected> against libstdc++ 13 (clang before 19
+      # reports a __cpp_concepts that libstdc++ finds too small) and so reports
+      # every translation unit as broken.
+      - uses: actions/setup-python@v5
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'ubuntu-latest' && matrix.mode == 'release' }}
+        with:
+          python-version: '3.12'
       - name: Static analysis
         if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'ubuntu-latest' && matrix.mode == 'release' }}
         run: |
-          sudo apt-get install --no-install-recommends -y clang-tidy
+          pip install 'clang-tidy==23.*'
           xmake ci-tidy
 
   # Slang emits SPIR-V on Linux; Apple's toolchain accepts the MSL on macOS.
@@ -309,6 +262,7 @@ jobs:
     name: shader compile (${{ matrix.target }})
     needs: inventory
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

@@ -79,7 +79,20 @@ ci/
     └── examples/                     committed tripwire fixtures
 ```
 
-`.github/workflows/push.yml` is the push and pull-request tier.
+`.github/workflows/push.yml` is the push and pull-request tier: format, the
+host build and unit tests on Ubuntu and macOS in debug and release, schema,
+pins and shaders. `.github/workflows/tooling.yml` runs the tooling's own tests
+(`ci-test`) and the harness (`ci-machine`, `bench`, `ci-bundle`). They test the
+tooling and not the engine, so they start when `ci/` or `xmake.lua` change,
+every night, and on demand, not on every push. Every job has a timeout, so a
+hang costs minutes and not the six hours GitHub allows.
+
+On Linux, `ci-tidy` runs clang-tidy 23 from pip, like the clang-format of the
+format job. Ubuntu's apt clang-tidy is 18, which cannot read `<expected>`
+against libstdc++ 13 (clang before 19 reports a smaller `__cpp_concepts` than
+libstdc++ asks for). For the same reason `ci-test` names a compiler that cannot
+build `core_error.h` and leaves it out of the compile-fail snippets, and fails
+only if none is left.
 
 ---
 

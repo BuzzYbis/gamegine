@@ -14,7 +14,11 @@
 -- the test would pass for the wrong reason.
 --
 -- Every compiler found is used, because the messages and some of the checks
--- differ between them.
+-- differ between them. One that cannot build the engine's own foundation
+-- header is named in the output and left out, since its failures would say
+-- nothing about the snippets: clang 18 with libstdc++ 13, the pair on Ubuntu
+-- 24.04, has no std::expected, because clang before 19 reports a smaller
+-- __cpp_concepts than libstdc++ asks for. The test fails if none is left.
 
 import("testing", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
@@ -63,10 +67,40 @@ local function compile(compiler, file, good)
     return code, text
 end
 
+-- Return whether 'compiler' builds the engine's foundation header, and if it
+-- does not, the first line of what it said.
+local function builds_engine(compiler)
+    local source, messages = os.tmpfile(), os.tmpfile()
+    io.writefile(source, "#include <engine/core/core_error.h>\nint main() {}\n")
+    local code = os.execv(compiler,
+                          {"-std=c++23", "-fsyntax-only", "-x", "c++",
+                           "-I", INCLUDE, source},
+                          {try = true, stdout = os.nuldev(),
+                           stderr = messages})
+    local text = io.readfile(messages) or ""
+    os.tryrm(source)
+    os.tryrm(messages)
+    return code == 0, text:match("[^\n]*error:[^\n]*") or text:match("^[^\n]*")
+end
+
 function run(t)
-    local available = compilers()
-    testing.check(t, "a C++ compiler is installed", #available > 0,
+    local found = compilers()
+    testing.check(t, "a C++ compiler is installed", #found > 0,
                   "tried clang++, g++ and c++")
+
+    local available = {}
+    for _, compiler in ipairs(found) do
+        local ok, first_line = builds_engine(compiler)
+        if ok then
+            table.insert(available, compiler)
+        else
+            print(("       %s is left out: it cannot build core_error.h (%s)")
+                  :format(compiler, first_line or "no message"))
+        end
+    end
+    testing.check(t, "a C++ compiler can build the engine's headers",
+                  #available > 0 or #found == 0,
+                  "none of " .. table.concat(found, ", ") .. " could")
 
     local snippets = os.files(path.join(SNIPPETS, "*.cpp"))
     table.sort(snippets)
