@@ -647,7 +647,7 @@ task("ci-test")
         -- These guard parsers and validators that run on machines nobody is
         -- watching. They need no GPU and no engine, so they run in the cloud
         -- push tier alongside the other cheap checks.
-        local suites = {"probe_test", "powermetrics_test",
+        local suites = {"probe_test", "powermetrics_test", "style_test",
                         "jsonschema_test", "machine_test",
                         "bench_test", "bdestyle_test", "formatter_test",
                         "compile_fail_test"}
@@ -672,6 +672,9 @@ task("ci-test")
                     if f.detail ~= "" then
                         style.say("${dim}         %s", f.detail)
                     end
+                    style.annotate("error", name,
+                                   f.label .. (f.detail ~= "" and ("\n" ..
+                                   f.detail) or ""))
                 end
             end
         end
@@ -957,12 +960,24 @@ task("ci-unit")
             return
         end
 
+        local build_log = os.tmpfile()
         local built = os.execv("xmake", {"build", "--yes", "tests"},
-                               {stdout = os.tmpfile(), stderr = os.tmpfile(),
+                               {stdout = build_log, stderr = build_log,
                                 try = true})
         if built ~= 0 then
+            -- The compiler's own words, not just that it failed.
+            local lines = {}
+            for line in (io.readfile(build_log) or ""):gmatch("[^\n]+") do
+                table.insert(lines, line)
+            end
+            local tail = table.concat(lines, "\n", math.max(1, #lines - 40),
+                                      #lines)
+            style.say("${dim}%s${reset}", tail)
+            style.annotate("error", "The test target failed to build", tail)
+            os.tryrm(build_log)
             raise("the test target failed to build")
         end
+        os.tryrm(build_log)
 
         local binaries = os.files(path.join(os.projectdir(), "build",
                                             "**", "tests"))
@@ -979,6 +994,17 @@ task("ci-unit")
                                  {lines = true, stream = "both",
                                   accept = {0, 1}, timeout = 600000})
         if record.status ~= "OK" then
+            -- A test binary that died (an abort, a signal) leaves its last
+            -- lines, which name the test it was running.
+            local lines = {}
+            for line in (record.output or ""):gmatch("[^\n]+") do
+                table.insert(lines, line)
+            end
+            local tail = table.concat(lines, "\n", math.max(1, #lines - 25),
+                                      #lines)
+            style.say("${dim}%s${reset}", tail)
+            style.annotate("error", "The unit tests did not finish",
+                           record.reason .. "\n" .. tail)
             raise("could not run the tests: %s", record.reason)
         end
 
@@ -1039,6 +1065,19 @@ task("ci-unit")
             style.say("")
             style.say("${bad}%d failed${reset}, %d passed%s", #failed, passed,
                       suites and ("   (" .. suites .. ")") or "")
+
+            -- What GoogleTest said about them, without the lines of tests
+            -- that ran: the file, the line, and the values compared.
+            local said = {}
+            for line in record.value:gmatch("[^\n]+") do
+                if not (line:find("^%[ +OK +%]") or line:find("^%[ +RUN +%]")
+                        or line:find("^%[[-=]+%]")) then
+                    table.insert(said, line)
+                end
+            end
+            style.annotate("error", "Unit tests failed",
+                           table.concat(failed, ", ") .. "\n" ..
+                           table.concat(said, "\n"))
             raise("%d unit test(s) failed", #failed)
         end
 

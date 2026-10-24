@@ -91,8 +91,9 @@ On Linux, `ci-tidy` runs clang-tidy 23 from pip, like the clang-format of the
 format job. Ubuntu's apt clang-tidy is 18, which cannot read `<expected>`
 against libstdc++ 13 (clang before 19 reports a smaller `__cpp_concepts` than
 libstdc++ asks for). For the same reason `ci-test` names a compiler that cannot
-build `core_error.h` and leaves it out of the compile-fail snippets, and fails
-only if none is left.
+build the headers of `engine/core` (clang 18 here, and GCC 12, which has no
+`<format>`) and leaves it out of the compile-fail snippets, and fails only if
+none is left.
 
 ---
 

@@ -74,6 +74,7 @@ function run(program, argv, opt)
     local timeout = opt.timeout or DEFAULT_TIMEOUT_MS
     local outfile, errfile = os.tmpfile(), os.tmpfile()
     local code
+    local started = os.mclock()
     try
     {
         function ()
@@ -89,6 +90,7 @@ function run(program, argv, opt)
         }
     }
 
+    local elapsed = os.mclock() - started
     local out = io.readfile(outfile) or ""
     local err = io.readfile(errfile) or ""
     os.tryrm(outfile)
@@ -98,10 +100,19 @@ function run(program, argv, opt)
         return unavailable("program not found or not executable", source)
     end
 
-    -- os.execv returns -1 when it killed the child at the timeout.
+    -- os.execv returns -1 when it killed the child at the timeout, and also
+    -- when a signal ended the child on its own (an abort, a crash). Only the
+    -- time says which, and what the command printed before it went is kept.
     if code == -1 then
-        return unavailable(
-            ("timed out after %dms and was killed"):format(timeout), source)
+        local reason
+        if elapsed >= timeout * 0.9 then
+            reason = ("timed out after %dms and was killed"):format(timeout)
+        else
+            reason = ("ended by a signal after %dms"):format(elapsed)
+        end
+        local record = unavailable(reason, source)
+        record.output = out .. err
+        return record
     end
 
     local accepted = false
@@ -116,7 +127,12 @@ function run(program, argv, opt)
         if detail == "" then
             detail = "no diagnostic output"
         end
-        return unavailable(("exit code %d: %s"):format(code, detail), source)
+        local record = unavailable(("exit code %d: %s"):format(code, detail),
+                                   source)
+        -- The first line is the reason; a caller that needs to show more of
+        -- what the command printed has all of it.
+        record.output = out .. err
+        return record
     end
 
     local text = out

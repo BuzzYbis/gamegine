@@ -62,6 +62,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -71,6 +72,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -209,32 +211,71 @@ double process_cpu_seconds()
     return seconds(usage.ru_utime) + seconds(usage.ru_stime);
 }
 
-/// How many record lines a second this machine formats, in memory, one at a
-/// time into a buffer: what the logger thread can do at best, with no file.
-/// The best of several short runs, after a warm-up: the first milliseconds on
-/// a thread may be on a slow core, and one run would read that.
-double lines_formatted_per_second()
+/// Write all of the specified [size] bytes at [data] to [fd]; return whether
+/// it could.
+bool write_all(const std::int32_t fd, const char* data, std::size_t size)
+{
+    while (size > 0) {
+        const ssize_t result = ::write(fd, data, size);
+        if (result > 0) {
+            data += result;
+            size -= static_cast<std::size_t>(result);
+        } else if (result < 0 && errno == EINTR) {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// How many record lines a second this machine takes, on one thread, from a
+/// record to a file: what the logger thread can do at best. A line is
+/// formatted into a batch, and the batch is written when little room is left,
+/// as the logger does, so a slow disk is part of the figure and not a surprise
+/// later. The best of several short runs: a thread may start on a slow core,
+/// and one run would read that.
+double lines_per_second_to_a_file()
 {
     constexpr std::uint32_t k_LINES = 100'000;
     constexpr std::uint32_t k_RUNS  = 8;
+
+    const LogFile file;
+    if (file.fd() < 0) {
+        return 0.0;
+    }
 
     const TickConversion clock(0, 1, 1);
     const LogRecord      record = LogRecord::make(
         Severity::e_WARN,
         1'000,
         Error::make(Error::Kind::e_UNKNOWN, Error::CoreReason::e_UNKNOWN, 1));
-    std::array<char, 1024> buffer{};
-    volatile std::uint8_t  sink = 0;
+    std::vector<char> batch(Logger::k_BATCH_SIZE);
 
     double best = 0.0;
     for (std::uint32_t run = 0; run < k_RUNS; ++run) {
-        const auto start = std::chrono::steady_clock::now();
+        // A file that starts empty, as the logger's does.
+        if (::ftruncate(file.fd(), 0) != 0 ||
+            ::lseek(file.fd(), 0, SEEK_SET) != 0) {
+            return 0.0;
+        }
+
+        std::size_t used  = 0;
+        const auto  start = std::chrono::steady_clock::now();
         for (std::uint32_t i = 0; i < k_LINES; ++i) {
-            LineWriter writer(buffer);
+            if (batch.size() - used < Logger::k_FLUSH_THRESHOLD) {
+                if (!write_all(file.fd(), batch.data(), used)) {
+                    return 0.0;
+                }
+                used = 0;
+            }
+            LineWriter writer(std::span<char>(batch.data() + used,
+                                              batch.size() - used));
             LogFormat::append_record(writer, record, "calibrate", clock);
-            // The compiler cannot know which byte, so it must write them all.
-            sink = static_cast<std::uint8_t>(
-                sink + static_cast<std::uint8_t>(buffer[writer.size() / 2]));
+            used += writer.size();
+        }
+        if (!write_all(file.fd(), batch.data(), used)) {
+            return 0.0;
         }
         const double seconds = std::chrono::duration<double>(
                                    std::chrono::steady_clock::now() - start)
@@ -1253,10 +1294,10 @@ constexpr double k_RESTING_CAP =
 
 /// Return why a test of the logger's speed cannot tell a logger that rests
 /// from one that is slow on this machine, or an empty string if it can. The
-/// difference only shows on a machine that formats well past the cap of one
-/// that rests; a slower one, or a build under a sanitizer, would have the test
-/// reported as skipped, not passed. 'formats' is set to what the machine
-/// formats a second.
+/// difference only shows on a machine that takes lines to a file well past the
+/// cap of a logger that rests; a slower one, or a build under a sanitizer,
+/// would have the test reported as skipped, not passed. 'formats' is set to
+/// the lines a second the machine takes from a record to a file.
 std::string reason_to_skip(double& formats)
 {
     // The flooding thread, the logger thread and the rest of the machine.
@@ -1266,13 +1307,14 @@ std::string reason_to_skip(double& formats)
     }
 
     prefer_fast_cores();
-    formats = lines_formatted_per_second();
+    formats = lines_per_second_to_a_file();
     if (formats >= 2.0 * k_RESTING_CAP) {
         return {};
     }
     std::ostringstream reason;
-    reason << "this build formats " << formats / 1e6
-           << " M lines a second, under twice the " << k_RESTING_CAP / 1e6
+    reason << "this machine takes " << formats / 1e6
+           << " M lines a second to a file, under twice the "
+           << k_RESTING_CAP / 1e6
            << " M a second a logger that rests can write: it could not tell "
               "the two apart";
     return reason.str();
@@ -1351,7 +1393,7 @@ TEST(CoreLog, ALoggerThatIsBehindDoesNotRestBetweenPasses)
 
     EXPECT_GT(rate, k_PASS_RATE)
         << "the logger wrote " << rate / 1e6 << " M lines a second from a "
-        << "thread that floods it, and formats " << formats / 1e6 << " M: "
+        << "thread that floods it, and can take " << formats / 1e6 << " M: "
         << "it is resting between passes while a ring is full";
 }
 
@@ -1376,7 +1418,7 @@ TEST(CoreLog, AFloodThroughTheLockedPathIsNotHeldToOneRingAPass)
 
     EXPECT_GT(rate, k_PASS_RATE)
         << "the logger wrote " << rate / 1e6 << " M lines a second from a "
-        << "thread that floods the locked path, and formats " << formats / 1e6
+        << "thread that floods the locked path, and can take " << formats / 1e6
         << " M: it is resting between passes while the shared ring is full";
 }
 

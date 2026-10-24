@@ -41,6 +41,21 @@ function run(t)
     local nonzero = probe.run("sh", {"-c", "exit 3"})
     testing.equal(t, "a non-zero exit is UNAVAILABLE", nonzero.status,
                   "UNAVAILABLE")
+    -- What a failed command printed is kept, for a task that must show more
+    -- than the reason's first line: the end of a test binary that aborted.
+    local printed = probe.run("sh", {"-c", "echo out; echo err 1>&2; exit 3"})
+    testing.equal(t, "a failed command keeps what it printed", printed.output,
+                  "out\nerr\n")
+    -- A command ended by a signal is not one that timed out, and says what it
+    -- printed first.
+    local aborted = probe.run("sh", {"-c", "echo last words; kill -ABRT $$"})
+    testing.equal(t, "a command ended by a signal is UNAVAILABLE",
+                  aborted.status, "UNAVAILABLE")
+    testing.check(t, "its reason does not claim a timeout",
+                  tostring(aborted.reason):find("timed out", 1, true) == nil,
+                  tostring(aborted.reason))
+    testing.equal(t, "it keeps what it printed before it went",
+                  aborted.output, "last words\n")
     local accepted = probe.run("sh", {"-c", "echo v1.2; exit 3"},
                                {accept = {0, 3}})
     testing.equal(t, "an accepted non-zero exit succeeds", accepted.value,

@@ -232,9 +232,13 @@ jobs:
       # Unit tests run here rather than in their own job because they need the
       # same Vulkan resolution and the same built tree; a separate job would
       # pay for both twice.
+      # 'ci-unit' runs the same test binary as 'xmake test', and says what
+      # failed. A failure leaves an annotation naming the tests and what
+      # GoogleTest said, which can be read without logging in to GitHub; it
+      # lists the tests a build skipped, which 'xmake test' counts as passed.
       - name: Unit tests
         if: ${{ needs.inventory.outputs.has_headers == 'true' }}
-        run: xmake test
+        run: xmake ci-unit
 
       # Static analysis completes the "Format and lint" row of ci.md section
       # 3. It runs here because clang-tidy needs compile_commands.json, which

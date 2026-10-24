@@ -14,11 +14,12 @@
 -- the test would pass for the wrong reason.
 --
 -- Every compiler found is used, because the messages and some of the checks
--- differ between them. One that cannot build the engine's own foundation
--- header is named in the output and left out, since its failures would say
--- nothing about the snippets: clang 18 with libstdc++ 13, the pair on Ubuntu
--- 24.04, has no std::expected, because clang before 19 reports a smaller
--- __cpp_concepts than libstdc++ asks for. The test fails if none is left.
+-- differ between them. One that cannot build the engine's core headers is
+-- named in the output and left out, since its failures would say nothing about
+-- the snippets: GCC 12 has no <format>, and clang 18 with libstdc++ 13, the
+-- pair on Ubuntu 24.04, has no std::expected, because clang before 19 reports
+-- a smaller __cpp_concepts than libstdc++ asks for. The test fails if none is
+-- left.
 
 import("testing", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
@@ -67,11 +68,24 @@ local function compile(compiler, file, good)
     return code, text
 end
 
--- Return whether 'compiler' builds the engine's foundation header, and if it
--- does not, the first line of what it said.
+-- Return a source file that includes every header of engine/core.
+local function core_headers_source()
+    local lines = {}
+    for _, header in ipairs(os.files(path.join(INCLUDE, "engine", "core",
+                                               "*.h"))) do
+        table.insert(lines, "#include <engine/core/" .. path.filename(header)
+                            .. ">")
+    end
+    table.sort(lines)
+    table.insert(lines, "int main() {}")
+    return table.concat(lines, "\n") .. "\n"
+end
+
+-- Return whether 'compiler' builds the engine's core headers, and if it does
+-- not, the first line of what it said.
 local function builds_engine(compiler)
     local source, messages = os.tmpfile(), os.tmpfile()
-    io.writefile(source, "#include <engine/core/core_error.h>\nint main() {}\n")
+    io.writefile(source, core_headers_source())
     local code = os.execv(compiler,
                           {"-std=c++23", "-fsyntax-only", "-x", "c++",
                            "-I", INCLUDE, source},
@@ -94,7 +108,7 @@ function run(t)
         if ok then
             table.insert(available, compiler)
         else
-            print(("       %s is left out: it cannot build core_error.h (%s)")
+            print(("       %s is left out: it cannot build the core headers (%s)")
                   :format(compiler, first_line or "no message"))
         end
     end
