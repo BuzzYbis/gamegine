@@ -34,6 +34,17 @@
 -- 'xmake format' before a push restores them, and CI checks it did.
 --
 -- apply() is a pure function on text, so it is tested without files.
+--
+-- One rule here has no rewrite, because renaming a member means renaming its
+-- uses too, and a script cannot see them all. problems() reports it:
+--
+--   Naming (a deviation from the standard). A data member that is a pointer,
+--         or owns one, ends in '_p': 'd_producer_p' for a 'Producer*',
+--         'd_shared_p' for a 'std::unique_ptr<Producer>'. The standard keeps
+--         '_p' for raw pointers; here a smart pointer takes it too, so that
+--         '->' on a member shows an indirection whatever the type. Class
+--         data ('s_') follows the same rule. Views, optionals, arrays and
+--         containers of pointers are not pointers and take no suffix.
 
 local LAST_COLUMN   = 79
 local BANNER_INDENT = 25    -- spaces before '//' (Rule 6.1.3)
@@ -210,6 +221,93 @@ function _heading(lines, i)
     end
     return {indent .. "///" .. title,
             indent .. "///" .. table.concat(marks)}
+end
+
+-- ---------------------------------------------------------- naming ---
+
+-- Words that come before a type in a declaration without being part of it.
+local SPECIFIERS = {
+    static = true, inline = true, mutable = true, thread_local = true,
+    constexpr = true, const = true, volatile = true,
+}
+
+-- Words that start a statement that is not a declaration.
+local STATEMENTS = {
+    ["return"] = true, ["else"] = true, ["goto"] = true, delete = true,
+    throw = true, case = true, new = true, co_return = true,
+    co_yield = true, sizeof = true, using = true, typedef = true,
+}
+
+local SMART_POINTERS = {"std::unique_ptr", "std::shared_ptr", "std::weak_ptr"}
+
+-- Return 'declared', the text in front of a member's name, without the
+-- specifiers that open it, or nil if it opens something that is not a
+-- declaration ('return', 'delete').
+function _type_of(declared)
+    local rest = declared
+    while true do
+        local word, tail = rest:match("^(%S+)%s*(.*)$")
+        if STATEMENTS[word] then
+            return nil
+        end
+        if SPECIFIERS[word] and tail ~= "" then
+            rest = tail
+        else
+            break
+        end
+    end
+    return rest
+end
+
+-- Return true if 'type' is a pointer or a smart pointer, and not something
+-- that holds some: '*' ends it, or a smart pointer template spans all of it.
+-- Only the characters of a type are allowed, so that '"size * d_count;"' and
+-- 'x = y * d_z;' are not read as declarations.
+function _is_pointer(type)
+    if not type:match("^[%w_:<>,%s%*&]+$") then
+        return false
+    end
+    local bare = type
+    repeat
+        local before = bare
+        bare = bare:gsub("%s*const$", ""):gsub("%s*volatile$", "")
+    until bare == before
+    if bare:match("%*$") then
+        return true
+    end
+    for _, smart in ipairs(SMART_POINTERS) do
+        if bare:match("^" .. smart:gsub("%p", "%%%0") .. "%s*<.*>$") then
+            return true
+        end
+    end
+    return bare:match("^std::atomic%s*<[^<>]*%*%s*>$") ~= nil
+end
+
+-- Return the problems in 'text' that no rewrite can fix, in order, each as
+-- {line = <number>, text = <the line>, message = <what is wrong>}. Empty
+-- when there are none. A member is a line of the form '<type> d_name;',
+-- 'd_name = ...;' or 'd_name{...};' ('s_' for class data); one that does not
+-- fit a single line is not seen.
+function problems(text)
+    local result = {}
+    local number = 0
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        number = number + 1
+        -- Comments need no case of their own: the '//' of one falls in front
+        -- of whatever it mentions, and no type has a '/' in it.
+        local declared, name = line:match(
+            "^%s*(.-%S)%s+([ds]_[%w_]+)%s*[;={]")
+        local type = declared and _type_of(declared)
+        if type and _is_pointer(type) and not name:match("_p$") then
+            table.insert(result, {
+                line = number,
+                text = line,
+                message = ("pointer data member '%s' takes a '_p' suffix: "
+                           .. "'%s_p'"):format(name, name),
+            })
+        end
+    end
+    return result
 end
 
 -- ---------------------------------------------------------- apply ---

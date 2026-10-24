@@ -202,7 +202,7 @@ TEST(CoreLogMessageText, IsValidAcceptsWhatItDocuments)
          }) {
         EXPECT_TRUE(LogMessageText::is_valid("streamed {} pages", argument))
             << "argument "
-            << static_cast<unsigned>(std::to_underlying(argument));
+            << static_cast<std::uint32_t>(std::to_underlying(argument));
     }
 }
 
@@ -264,7 +264,7 @@ TEST(CoreLogMessageCatalog, NamesDomainsAsErrorsDo)
 {
     // Every byte a domain can hold, named or not: a message line and an error
     // line must never disagree about which subsystem they come from.
-    for (unsigned value = 0; value <= 0xFFU; ++value) {
+    for (std::uint32_t value = 0; value <= 0xFFU; ++value) {
         const auto domain = static_cast<Domain>(value);
         EXPECT_EQ(LogMessageCatalog::to_string_domain(domain),
                   ErrorCatalog::to_string_domain(domain))

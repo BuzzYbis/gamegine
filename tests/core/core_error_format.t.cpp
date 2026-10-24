@@ -83,6 +83,21 @@ TEST(CoreErrorFormat, AlternateFormAppendsTheRawValue)
               "<=> raw=0x000000cd00000002");
 }
 
+TEST(CoreErrorFormat, TheLoggersErrorReadsAsALine)
+{
+    // The context is the limit that was reached: 32, in hex.
+    constexpr Error error = Error::make(
+        Error::Kind::e_EXHAUSTED,
+        Error::CoreReason::e_LOG_TOO_MANY_THREADS,
+        32);
+
+    EXPECT_EQ(std::format("{}", error),
+              "core | exhausted | log_too_many_threads | ctx=0x00000020");
+    EXPECT_EQ(std::format("{:#}", error),
+              "core | exhausted | log_too_many_threads | ctx=0x00000020 "
+              "<=> raw=0x0000002000010101");
+}
+
 TEST(CoreErrorFormat, ContextIsAlwaysEightHexDigits)
 {
     EXPECT_EQ(std::format("{}",

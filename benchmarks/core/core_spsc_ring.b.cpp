@@ -7,8 +7,9 @@
 //
 //@DESCRIPTION: Every log call pushes into one of these rings on the thread
 // that logs, and the logger thread pops from all of them. Three things are
-// measured, at three sizes of value (8 bytes, like an 'Error'; 16, the log
-// record; 64) in the ring of 4096 slots a thread logs into:
+// measured on one ring, at three sizes of value (8 bytes, like an 'Error'; 16,
+// the log record; 64) in the ring of 4096 slots a thread logs into, then two
+// on many rings, with the 16-byte record:
 //
 //: o 'PushPopPair': one thread pushes a value and pops it. The cost of the
 //:   calls alone, nothing contended.
@@ -22,6 +23,25 @@
 //:   ring idles between drains. Run for a producer pushing single values and
 //:   one pushing batches of 8, and for each placement of the two threads
 //:   that the platform can ask for.
+//:
+//: o 'FanInSpin': 1, 2, 3 or 7 producer threads, each with a ring of its own,
+//:   and this thread popping them round robin, at most a ring's worth from
+//:   each in turn so that a fast producer cannot hold the others back. A
+//:   producer whose ring is full spins until it has room, so no value is
+//:   lost and the rate is the most the consumer takes in from all of them.
+//:   The count that leaves a core for the consumer (3, on 4 performance
+//:   cores) and the one that uses every core (7) are in the list.
+//:
+//: o 'FanInDrop': the same threads behaving as the logger does. A producer
+//:   never waits: a push that finds the ring full is counted as refused and
+//:   the producer moves on. The consumer sleeps a millisecond between passes
+//:   and each iteration runs for 100 milliseconds. 'items_per_second' is
+//:   what the consumer received, 'attempts' what the producers tried to push
+//:   (they push far faster than the consumer pops, so most are refused),
+//:   'refused_%' the share that found a full ring, and 'passes' the passes
+//:   the consumer made (a sleep of a millisecond lasts longer, and longer
+//:   still when every core is busy). Every value pushed and accepted must
+//:   come out, once and in order: only the refused are lost.
 //
 // Each benchmark reports 'items_per_second', the values that went through the
 // ring, each pushed once and popped once, and 'ops', the pushes plus the pops
@@ -50,14 +70,17 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <thread>
+#include <vector>
 
 #ifdef __APPLE__
 #include <pthread.h>
@@ -73,6 +96,21 @@ constexpr std::size_t k_CAPACITY = 4096;
 
 /// Values moved by one iteration of a 'Transfer' benchmark.
 constexpr std::uint64_t k_TRANSFERRED = std::uint64_t{1} << 20U;
+
+/// Values each producer moves in one iteration of a 'FanInSpin' benchmark.
+constexpr std::uint64_t k_PER_PRODUCER = std::uint64_t{1} << 18U;
+
+/// How long a 'FanInSpin' consumer waits for values that do not come before
+/// it gives up: a ring that loses one would otherwise leave it waiting for
+/// ever.
+constexpr std::chrono::seconds k_SPIN_TIMEOUT{60};
+
+/// How long one iteration of a 'FanInDrop' benchmark runs.
+constexpr std::chrono::milliseconds k_DROP_DURATION{100};
+
+/// What the consumer of a 'FanInDrop' sleeps between two passes, as the
+/// logger thread does ('Logger::k_DRAIN_INTERVAL').
+constexpr std::chrono::milliseconds k_PASS_INTERVAL{1};
 
 /// A trivially copyable value of 't_WORDS' 64-bit words.
 template <std::size_t t_WORDS> struct Item {
@@ -268,6 +306,241 @@ void transfer(benchmark::State& state)
     prefer(Core::e_PERFORMANCE);
 }
 
+// ----------------------------------------------------------- many rings -----
+
+/// The value the many-ring benchmarks move: 16 bytes, like a log record.
+using Record = Item<2>;
+
+/// The ring each producer thread pushes into.
+using RecordRing = SpscRing<Record, k_CAPACITY>;
+
+/// What one pass over the rings found.
+struct Drained {
+    std::uint64_t popped;  // values taken out
+    std::uint64_t wrong;   // values that were not the next one of their ring
+};
+
+/// Return the specified 'count' rings, each on the heap as the ring wants.
+std::vector<std::unique_ptr<RecordRing>> make_rings(const std::size_t count)
+{
+    std::vector<std::unique_ptr<RecordRing>> rings;
+    rings.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        rings.push_back(std::make_unique<RecordRing>());
+    }
+    return rings;
+}
+
+/// Pop from each of the specified 'rings' in turn, at most a ring's worth from
+/// each, so that a producer which refills its ring as fast as it is emptied
+/// cannot keep the others waiting. 'expected[i]' is the value ring 'i' must
+/// give next, and is moved on past whatever the ring did give, so that one
+/// lost value is counted once and not on every value after it. Return what
+/// was found.
+Drained drain_once(const std::span<const std::unique_ptr<RecordRing>> rings,
+                   const std::span<std::uint64_t>                     expected)
+{
+    Drained found{0, 0};
+    for (std::size_t i = 0; i < rings.size(); ++i) {
+        for (std::size_t taken = 0; taken < k_CAPACITY; ++taken) {
+            const std::optional<Record> record = rings[i]->try_pop();
+            if (!record.has_value()) {
+                break;
+            }
+            // Both words are checked, so half a record is not a record.
+            const bool right = record->words[0] == expected[i] &&
+                               record->words[1] == expected[i] + 1;
+            found.wrong += right ? 0U : 1U;
+            expected[i] = record->words[0] + 1;
+            ++found.popped;
+        }
+    }
+    return found;
+}
+
+/// Make the specified 'benchmark' run for each producer count that leaves a
+/// core to the consumer: 1, 2, 3 (the most that leaves a performance core
+/// of the M2 to the consumer), and 7 (every core of the M2).
+/// TODO(Profile L): choose the counts for the Core Ultra 9 185H.
+void for_each_producer_count(benchmark::Benchmark* benchmark)
+{
+    benchmark->ArgName("producers");
+    const std::uint32_t cores = std::thread::hardware_concurrency();
+    for (const std::uint32_t producers : {1U, 2U, 3U, 7U}) {
+        if (producers == 1U || producers < cores) {
+            benchmark->Arg(producers);
+        }
+    }
+}
+
+void fan_in_spin(benchmark::State& state)
+{
+    const auto producers = static_cast<std::size_t>(state.range(0));
+    state.SetLabel("asked P for all");
+    prefer(Core::e_PERFORMANCE);
+
+    const auto                 rings = make_rings(producers);
+    std::vector<std::uint64_t> expected(producers);
+    std::vector<std::thread>   threads;
+    threads.reserve(producers);
+
+    const std::uint64_t total = producers * k_PER_PRODUCER;
+    for ([[maybe_unused]] const auto _ : state) {
+        std::ranges::fill(expected, 0U);
+        std::atomic<bool> give_up{false};
+        for (std::size_t p = 0; p < producers; ++p) {
+            threads.emplace_back([&ring = *rings[p], &give_up] {
+                prefer(Core::e_PERFORMANCE);
+                for (std::uint64_t next = 0; next < k_PER_PRODUCER; ++next) {
+                    const Record record = make_item<Record>(next);
+                    while (!ring.try_push(record)) {
+                        if (give_up.load(std::memory_order_relaxed)) {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+
+        std::uint64_t popped = 0;
+        std::uint64_t wrong  = 0;
+        std::uint64_t idle   = 0;
+        const auto limit = std::chrono::steady_clock::now() + k_SPIN_TIMEOUT;
+        while (popped < total) {
+            const Drained found = drain_once(rings, expected);
+            popped += found.popped;
+            wrong += found.wrong;
+
+            // The clock is read once in a long while, and only when nothing
+            // came, so that waiting for a value costs what it costs.
+            idle = (found.popped == 0) ? idle + 1 : 0;
+            if (idle == (std::uint64_t{1} << 16U)) {
+                idle = 0;
+                if (std::chrono::steady_clock::now() > limit) {
+                    give_up.store(true, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        }
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
+        threads.clear();
+
+        // A rate means nothing if the values did not arrive: every one, once,
+        // in order within its ring, is checked on every iteration.
+        if (wrong != 0 || popped != total) {
+            state.SkipWithError("values were lost, repeated or reordered");
+            break;
+        }
+    }
+
+    const std::uint64_t values = iterations_of(state) * total;
+    report(state, values);
+    state.counters["per_producer"] = benchmark::Counter(
+        static_cast<double>(values) / static_cast<double>(producers),
+        benchmark::Counter::kIsRate);
+}
+
+/// What a producer thread of a 'FanInDrop' did: pushes the ring took, and
+/// pushes it refused.
+struct Tally {
+    std::uint64_t accepted;
+    std::uint64_t refused;
+};
+
+void fan_in_drop(benchmark::State& state)
+{
+    const auto producers = static_cast<std::size_t>(state.range(0));
+    state.SetLabel("asked P for all");
+    prefer(Core::e_PERFORMANCE);
+
+    const auto                 rings = make_rings(producers);
+    std::vector<std::uint64_t> expected(producers);
+    std::vector<Tally>         tallies(producers);
+    std::vector<std::thread>   threads;
+    threads.reserve(producers);
+
+    std::uint64_t delivered = 0;
+    std::uint64_t attempted = 0;
+    std::uint64_t refused   = 0;
+    std::uint64_t passes    = 0;
+    for ([[maybe_unused]] const auto _ : state) {
+        std::ranges::fill(expected, 0U);
+        std::atomic<bool> stop{false};
+        for (std::size_t p = 0; p < producers; ++p) {
+            threads.emplace_back([&ring  = *rings[p],
+                                  &tally = tallies[p],
+                                  &stop] {
+                prefer(Core::e_PERFORMANCE);
+                Tally mine{0, 0};
+                while (!stop.load(std::memory_order_relaxed)) {
+                    // The value is the count of pushes accepted so far, so a
+                    // value lost after it was accepted leaves a gap, while a
+                    // refused push leaves none.
+                    const Record record = make_item<Record>(mine.accepted);
+                    if (ring.try_push(record)) {
+                        ++mine.accepted;
+                    } else {
+                        ++mine.refused;
+                    }
+                }
+                tally = mine;
+            });
+        }
+
+        std::uint64_t wrong    = 0;
+        std::uint64_t received = 0;
+        const auto    deadline = std::chrono::steady_clock::now() +
+                                 k_DROP_DURATION;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const Drained found = drain_once(rings, expected);
+            received += found.popped;
+            wrong += found.wrong;
+            ++passes;
+            std::this_thread::sleep_for(k_PASS_INTERVAL);
+        }
+        stop.store(true, std::memory_order_relaxed);
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
+        threads.clear();
+        // The producers are gone: what is left in the rings is all there is.
+        for (Drained found = drain_once(rings, expected); found.popped != 0;
+             found         = drain_once(rings, expected)) {
+            received += found.popped;
+            wrong += found.wrong;
+        }
+
+        // Every push the rings accepted must have come out, and no other.
+        std::uint64_t accepted = 0;
+        std::uint64_t declined = 0;
+        for (std::size_t p = 0; p < producers; ++p) {
+            wrong += (expected[p] == tallies[p].accepted) ? 0U : 1U;
+            accepted += tallies[p].accepted;
+            declined += tallies[p].refused;
+        }
+        if (wrong != 0 || received != accepted) {
+            state.SkipWithError("accepted values were lost, repeated or "
+                                "reordered");
+            break;
+        }
+        delivered += received;
+        refused += declined;
+        attempted += accepted + declined;
+    }
+
+    report(state, delivered);
+    state.counters["attempts"] = benchmark::Counter(
+        static_cast<double>(attempted), benchmark::Counter::kIsRate);
+    state.counters["passes"] = benchmark::Counter(static_cast<double>(passes),
+                                                  benchmark::Counter::kIsRate);
+    state.counters["refused_%"] = benchmark::Counter(
+        attempted == 0 ? 0.0
+                       : 100.0 * static_cast<double>(refused) /
+                             static_cast<double>(attempted));
+}
+
 BENCHMARK(push_pop_pair<Item<1>>)->Name("PushPopPair/8B");
 BENCHMARK(push_pop_pair<Item<2>>)->Name("PushPopPair/16B");
 BENCHMARK(push_pop_pair<Item<8>>)->Name("PushPopPair/64B");
@@ -291,6 +564,15 @@ BENCHMARK(transfer<Item<8>, 1>)
 BENCHMARK(transfer<Item<2>, 8>)
     ->Name("Transfer/16B/batch of 8")
     ->Apply(for_each_placement)
+    ->UseRealTime();
+
+BENCHMARK(fan_in_spin)
+    ->Name("FanInSpin/16B")
+    ->Apply(for_each_producer_count)
+    ->UseRealTime();
+BENCHMARK(fan_in_drop)
+    ->Name("FanInDrop/16B")
+    ->Apply(for_each_producer_count)
     ->UseRealTime();
 
 }  // close unnamed namespace

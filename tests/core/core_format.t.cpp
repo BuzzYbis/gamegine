@@ -72,16 +72,19 @@ std::string reference_continued(std::string_view  text,
     }
     std::string result;
     for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto c = static_cast<unsigned char>(text[i]);
+        const char c = text[i];
+        // Its numeric code: a char may be signed, and a byte of UTF-8 is not
+        // below a space.
+        const auto code = static_cast<std::uint8_t>(c);
         if (c == '\n') {
             result += '\n';
             result.append(column, ' ');
         } else if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n') {
             // dropped: the '\n' that follows ends the line
-        } else if (c < 0x20U || c == 0x7FU) {
+        } else if (code < 0x20U || code == 0x7FU) {
             result += '?';
         } else {
-            result += static_cast<char>(c);
+            result += c;
         }
     }
     return result;
@@ -282,12 +285,12 @@ TEST(CoreFormatLineWriter, DecimalWritesEveryExtreme)
               "-9223372036854775808");
     EXPECT_EQ(written_by(32,
                          [](LineWriter& w) {
-                             w.append_decimal(static_cast<signed char>(-128));
+                             w.append_decimal(static_cast<std::int8_t>(-128));
                          }),
               "-128");
     EXPECT_EQ(written_by(32,
                          [](LineWriter& w) {
-                             w.append_decimal(static_cast<unsigned char>(255));
+                             w.append_decimal(static_cast<std::uint8_t>(255));
                          }),
               "255");
 }
@@ -356,6 +359,8 @@ TEST(CoreFormatLineWriter, DecimalFitsTheLimitsOfEveryType)
 {
     // The digit buffer is sized to the widest value exactly: a minimum with
     // its sign, or a maximum. A buffer one byte short fails here.
+    // The built-in types, named on purpose: 'long' and 'long long' are two
+    // types even where they have the same width, and each must work.
     expect_limits_match_std_format<signed char>();
     expect_limits_match_std_format<unsigned char>();
     expect_limits_match_std_format<short>();
@@ -446,7 +451,7 @@ TEST(CoreFormatLineWriter, NoContinuationLineCanLookLikeANewRecord)
 TEST(CoreFormatLineWriter, ContinuedAgreesWithTheReference)
 {
     std::string every_byte;
-    for (int c = 0; c < 256; ++c) {
+    for (std::int32_t c = 0; c < 256; ++c) {
         every_byte += static_cast<char>(c);
     }
     const std::array<std::string, 9> inputs = {

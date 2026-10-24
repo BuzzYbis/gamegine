@@ -292,8 +292,14 @@ inline std::size_t LineWriter::copy_plain(const std::span<char>  out,
                   "the first character must be the lowest byte of a word");
 
     // Control characters are the bytes below a space, and DEL.
-    constexpr unsigned char k_SPACE = 0x20;
-    constexpr unsigned char k_DEL   = 0x7F;
+    constexpr char k_SPACE = ' ';
+    constexpr char k_DEL   = '\x7F';
+
+    // A character as its numeric code, 0 to 255. A [char] may be signed, and
+    // a byte of UTF-8 is not below a space.
+    constexpr auto code_of = [](const char c) noexcept {
+        return static_cast<std::uint8_t>(c);
+    };
 
     // One byte value, repeated in all 8 bytes of a word:
     //   k_ONES    0x01  [below] 1 means equal to 0
@@ -301,8 +307,8 @@ inline std::size_t LineWriter::copy_plain(const std::span<char>  out,
     //   k_DELS    0x7f  ...and DEL; [x ^ k_DELS] turns DEL into 0
     //   k_HIGHS   0x80  the top bit of a byte, where [below] flags
     constexpr std::uint64_t k_ONES   = 0x0101'0101'0101'0101U;
-    constexpr std::uint64_t k_SPACES = k_ONES * k_SPACE;
-    constexpr std::uint64_t k_DELS   = k_ONES * k_DEL;
+    constexpr std::uint64_t k_SPACES = k_ONES * code_of(k_SPACE);
+    constexpr std::uint64_t k_DELS   = k_ONES * code_of(k_DEL);
     constexpr std::uint64_t k_HIGHS  = k_ONES * 0x80U;
 
     // SWAR technique
@@ -332,7 +338,7 @@ inline std::size_t LineWriter::copy_plain(const std::span<char>  out,
         if (flagged != 0) {
             // Lowest flag = bit 7 of the first control character's byte
             // (little-endian): [countr_zero] / CHAR_BIT is that byte.
-            const int byte = std::countr_zero(flagged) / CHAR_BIT;
+            const std::int32_t byte = std::countr_zero(flagged) / CHAR_BIT;
             return position + static_cast<std::size_t>(byte);         // RETURN
         }
     }
@@ -342,8 +348,8 @@ inline std::size_t LineWriter::copy_plain(const std::span<char>  out,
     // needs two more paths that must pad with spaces: a zero byte counts as
     // a control character.
     for (; position < text.size(); ++position) {
-        const auto c = static_cast<unsigned char>(text[position]);
-        if (c < k_SPACE || c == k_DEL) {
+        const auto code = code_of(text[position]);
+        if (code < code_of(k_SPACE) || code == code_of(k_DEL)) {
             return position;                                          // RETURN
         }
         out[position] = text[position];

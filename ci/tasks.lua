@@ -332,7 +332,8 @@ task("ci-format")
     set_menu {
         usage       = "xmake ci-format [--fix]",
         description = "Check first-party sources against .clang-format "
-                      .. "and the BDE rules it cannot express.",
+                      .. "and the BDE rules it cannot express, and report "
+                      .. "the naming rule no formatter can apply.",
         options = {
             {nil, "fix", "k", nil, "Rewrite files in place instead of "
                                    .. "reporting them."},
@@ -353,6 +354,12 @@ task("ci-format")
         if version.status ~= "OK" then
             raise("clang-format is not available: %s", version.reason)
         end
+        -- Checked before any file is: a different version reports files as
+        -- unformatted that are fine, which reads as a problem in the code.
+        local problem = formatter.version_problem(version.value)
+        if problem then
+            raise("%s", problem)
+        end
 
         local files = sources.list()
         if #files == 0 then
@@ -363,37 +370,60 @@ task("ci-format")
 
         local fix = option.get("fix")
         local offenders = {}
+        local naming = {}
 
         for _, f in ipairs(files) do
             local original = io.readfile(f)
             local text, reason = formatter.format_text(original, f)
             if text == nil then
                 raise("%s: %s", path.relative(f, os.projectdir()), reason)
-            elseif text ~= original then
+            end
+            if text ~= original then
                 if fix then
                     io.writefile(f, text)
                 else
                     table.insert(offenders, f)
                 end
             end
+            -- Looked at in the formatted text, which is what the file holds
+            -- once formatted. Nothing rewrites these, in either mode: a
+            -- rename has to follow the uses.
+            for _, problem in ipairs(formatter.problems(text)) do
+                table.insert(naming, {file = f, problem = problem})
+            end
         end
 
         if fix then
             style.say("${ok}formatted %d file(s): clang-format %s, then the "
                    .. "BDE pass", #files, version.value)
-            return
+        end
+        for _, f in ipairs(offenders) do
+            style.say("${bad}needs formatting${reset} %s",
+                   path.relative(f, os.projectdir()))
+        end
+        for _, n in ipairs(naming) do
+            style.say("${bad}naming${reset} %s:%d: %s",
+                   path.relative(n.file, os.projectdir()), n.problem.line,
+                   n.problem.message)
         end
 
+        local failures = {}
         if #offenders > 0 then
-            for _, f in ipairs(offenders) do
-                style.say("${bad}needs formatting${reset} %s",
-                       path.relative(f, os.projectdir()))
-            end
-            raise("%d of %d file(s) are not formatted; run "
-                  .. "'xmake format'", #offenders, #files)
+            table.insert(failures, ("%d of %d file(s) are not formatted; run "
+                                    .. "'xmake format'"):format(#offenders,
+                                                                #files))
         end
-        style.say("${ok}%d file(s) formatted correctly "
-               .. "(clang-format %s)", #files, version.value)
+        if #naming > 0 then
+            table.insert(failures, ("%d naming problem(s) to fix by hand: "
+                                    .. "no formatter renames"):format(#naming))
+        end
+        if #failures > 0 then
+            raise("%s", table.concat(failures, "; "))
+        end
+        if not fix then
+            style.say("${ok}%d file(s) formatted correctly "
+                   .. "(clang-format %s)", #files, version.value)
+        end
     end)
 task_end()
 
@@ -619,7 +649,8 @@ task("ci-test")
         -- push tier alongside the other cheap checks.
         local suites = {"probe_test", "powermetrics_test",
                         "jsonschema_test", "machine_test",
-                        "bench_test", "bdestyle_test"}
+                        "bench_test", "bdestyle_test", "formatter_test",
+                        "compile_fail_test"}
 
         local total, failed = 0, 0
         for _, name in ipairs(suites) do
@@ -954,10 +985,27 @@ task("ci-unit")
         -- Parse GoogleTest's plain output rather than trusting an exit code,
         -- so the summary names what failed.
         local passed, failed, suites = 0, {}, nil
+        local skipped = {}
         for line in record.value:gmatch("[^\n]+") do
             local n = line:match("^%[%s*PASSED%s*%]%s+(%d+) test")
             if n then
                 passed = tonumber(n) or passed
+            end
+            -- A skipped test checked nothing in this build. It is never
+            -- counted as a pass: the death tests of an 'assert' skip
+            -- themselves when asserts are compiled out.
+            local skipped_name = line:match(
+                "^%[%s*SKIPPED%s*%]%s+([%w_]+%.[%w_]+)")
+            if skipped_name then
+                local seen = false
+                for _, f in ipairs(skipped) do
+                    if f == skipped_name then
+                        seen = true
+                    end
+                end
+                if not seen then
+                    table.insert(skipped, skipped_name)
+                end
             end
             local name = line:match("^%[%s*FAILED%s*%]%s+([%w_]+%.[%w_]+)")
             if name then
@@ -996,6 +1044,14 @@ task("ci-unit")
 
         style.say("${ok}%d test(s) passed${reset}%s", passed,
                   suites and ("   ${dim}(" .. suites .. ")${reset}") or "")
+        if #skipped > 0 then
+            style.say("${warn}%d test(s) skipped, they checked nothing in "
+                   .. "this build (a debug build runs them):${reset}",
+                   #skipped)
+            for _, name in ipairs(skipped) do
+                style.say("${warn}  skipped${reset}  %s", name)
+            end
+        end
     end)
 task_end()
 

@@ -172,7 +172,7 @@ template <class t_TYPE, std::size_t t_CAPACITY>
     requires SpscRingParameters<t_TYPE, t_CAPACITY>
 class SpscRing final {
   private:
-    // PRIVATE CLASS CONSTANTS
+    // CLASS DATA
 
     /// Mask that turns a counter into a slot number; see [slot].
     static constexpr std::uint64_t k_MASK = t_CAPACITY - 1;

@@ -266,7 +266,8 @@ TEST(CoreLogMessageId, AcceptsEachArgumentTypeForItsDeclarationsOnly)
     };
 
     for (const Row& row : rows) {
-        SCOPED_TRACE(static_cast<unsigned>(std::to_underlying(row.declared)));
+        SCOPED_TRACE(
+            static_cast<std::uint32_t>(std::to_underlying(row.declared)));
         EXPECT_EQ(LogMessageId<void>::accepts(row.declared), row.none);
         EXPECT_EQ(LogMessageId<std::uint32_t>::accepts(row.declared),
                   row.unsigned_argument);

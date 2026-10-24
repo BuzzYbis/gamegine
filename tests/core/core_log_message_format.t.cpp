@@ -220,7 +220,8 @@ TEST(CoreLogMessageFormat, NoArgumentIsWiderThanItsBudget)
              }) {
             EXPECT_LE(written_text(text, bits).size(), k_widest)
                 << "argument "
-                << static_cast<unsigned>(std::to_underlying(text.argument()))
+                << static_cast<std::uint32_t>(
+                       std::to_underlying(text.argument()))
                 << ", bits " << bits << ": " << written_text(text, bits);
         }
     }

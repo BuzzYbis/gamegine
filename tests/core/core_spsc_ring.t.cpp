@@ -146,9 +146,9 @@ using Record = Item<2>;  // the logger's record: 16 bytes
 
 TEST(CoreSpscRingParameters, AcceptsATrivialTypeAndAPowerOfTwo)
 {
-    static_assert(SpscRingParameters<int, 1>);
-    static_assert(SpscRingParameters<int, 2>);
-    static_assert(SpscRingParameters<int, 4096>);
+    static_assert(SpscRingParameters<std::int32_t, 1>);
+    static_assert(SpscRingParameters<std::int32_t, 2>);
+    static_assert(SpscRingParameters<std::int32_t, 4096>);
     static_assert(SpscRingParameters<Record, 8>);
     static_assert(SpscRingParameters<Opaque, 8>);
     static_assert(SpscRingParameters<Padded, 8>);
@@ -159,11 +159,11 @@ TEST(CoreSpscRingParameters, AcceptsATrivialTypeAndAPowerOfTwo)
 
 TEST(CoreSpscRingParameters, RejectsACapacityThatIsNotAPowerOfTwo)
 {
-    static_assert(!SpscRingParameters<int, 0>);
-    static_assert(!SpscRingParameters<int, 3>);
-    static_assert(!SpscRingParameters<int, 6>);
-    static_assert(!SpscRingParameters<int, 1000>);
-    static_assert(!SpscRingParameters<int, 4095>);
+    static_assert(!SpscRingParameters<std::int32_t, 0>);
+    static_assert(!SpscRingParameters<std::int32_t, 3>);
+    static_assert(!SpscRingParameters<std::int32_t, 6>);
+    static_assert(!SpscRingParameters<std::int32_t, 1000>);
+    static_assert(!SpscRingParameters<std::int32_t, 4095>);
 
     SUCCEED();
 }
@@ -173,8 +173,8 @@ TEST(CoreSpscRingParameters, RejectsATypeThatIsNotTriviallyCopyable)
     // Slots are raw bytes copied in and out: a type with a destructor or a
     // copy constructor of its own would be bypassed.
     static_assert(!SpscRingParameters<std::string, 8>);
-    static_assert(!SpscRingParameters<std::vector<int>, 8>);
-    static_assert(!SpscRingParameters<std::unique_ptr<int>, 8>);
+    static_assert(!SpscRingParameters<std::vector<std::int32_t>, 8>);
+    static_assert(!SpscRingParameters<std::unique_ptr<std::int32_t>, 8>);
 
     SUCCEED();
 }
@@ -348,12 +348,12 @@ TYPED_TEST(CoreSpscRingQueue, DrainedRingTakesAFullLoadAgain)
 
     std::uint64_t next     = 0;
     std::uint64_t expected = 0;
-    for (int round = 0; round < 50; ++round) {
-        for (int i = 0; i < 8; ++i) {
+    for (std::int32_t round = 0; round < 50; ++round) {
+        for (std::int32_t i = 0; i < 8; ++i) {
             ASSERT_TRUE(ring->try_push(make_item<TypeParam>(next++)));
         }
         ASSERT_FALSE(ring->try_push(make_item<TypeParam>(next)));
-        for (int i = 0; i < 8; ++i) {
+        for (std::int32_t i = 0; i < 8; ++i) {
             const std::optional<TypeParam> item = ring->try_pop();
             ASSERT_TRUE(item.has_value());
             ASSERT_EQ(*item, make_item<TypeParam>(expected++));
@@ -573,11 +573,11 @@ TEST(CoreSpscRingTypes, HoldsOneByte)
 {
     const auto ring = std::make_unique<SpscRing<std::uint8_t, 256>>();
 
-    for (unsigned i = 0; i < 256; ++i) {
+    for (std::uint32_t i = 0; i < 256; ++i) {
         ASSERT_TRUE(ring->try_push(static_cast<std::uint8_t>(i)));
     }
     EXPECT_FALSE(ring->try_push(std::uint8_t{0}));
-    for (unsigned i = 0; i < 256; ++i) {
+    for (std::uint32_t i = 0; i < 256; ++i) {
         const std::optional<std::uint8_t> item = ring->try_pop();
         ASSERT_TRUE(item.has_value());
         ASSERT_EQ(*item, static_cast<std::uint8_t>(i));

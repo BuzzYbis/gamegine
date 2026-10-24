@@ -69,6 +69,7 @@ concept NamedErrorReason = ErrorReasonType<t_REASON> &&
 template <> struct ErrorReasonNames<Error::CoreReason> {
     static constexpr auto k_NAMES = std::to_array<std::string_view>({
         "unknown",
+        "log_too_many_threads",
     });
 };
 
@@ -108,6 +109,7 @@ class ErrorCatalog final {
     inline static constexpr auto k_KIND_NAMES =
         std::to_array<std::string_view>({
             "unknown",
+            "exhausted",
         });
 
     /// Name of a value that no enumerator has.

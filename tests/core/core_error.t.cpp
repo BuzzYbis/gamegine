@@ -170,6 +170,24 @@ TEST(CoreError, ReasonAsReturnsTheTypedReason)
     EXPECT_EQ(error.reason(), 0u);
 }
 
+TEST(CoreError, TheLoggersErrorPacksItsKindAndReasonWhereTheLayoutSays)
+{
+    // The first kind and the first reason that are not 'e_UNKNOWN', so what
+    // is tested is a real error, not values no enumerator names. The logger
+    // raises it when every thread slot is taken, and the context is the limit.
+    const Error error = Error::make(Error::Kind::e_EXHAUSTED,
+                                    Error::CoreReason::e_LOG_TOO_MANY_THREADS,
+                                    32);
+
+    EXPECT_EQ(error.raw(),
+              0x00000020'0001'01'01ull);  // context reason kind domain
+    EXPECT_EQ(error.domain(), Error::Domain::e_CORE);
+    EXPECT_EQ(error.kind(), Error::Kind::e_EXHAUSTED);
+    EXPECT_EQ(error.reason_as<Error::CoreReason>(),
+              Error::CoreReason::e_LOG_TOO_MANY_THREADS);
+    EXPECT_EQ(error.context(), 32u);
+}
+
 TEST(CoreError, IsConstexpr)
 {
     constexpr Error error = Error::make(Error::Kind::e_UNKNOWN,
@@ -185,12 +203,12 @@ TEST(CoreError, IsConstexpr)
 
 // ---------------------------------------------------------- propagation -----
 
-Result<int> succeeding_int()
+Result<std::int32_t> succeeding_int()
 {
     return 11;
 }
 
-Result<int> failing_int()
+Result<std::int32_t> failing_int()
 {
     return make_unexpected(Error::make(Error::Kind::e_UNKNOWN,
                                        Error::CoreReason::e_UNKNOWN,
@@ -272,8 +290,8 @@ TEST(CoreErrorTry, EvaluatesItsExpressionExactlyOnce)
 {
     // A macro that names its argument twice would run the call twice, which
     // for a fallible operation means doing the work twice.
-    int        calls = 0;
-    const auto count = [&calls]() -> Result<int> {
+    std::int32_t calls = 0;
+    const auto   count = [&calls]() -> Result<std::int32_t> {
         ++calls;
         return 1;
     };

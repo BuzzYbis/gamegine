@@ -226,6 +226,24 @@ TEST(CoreErrorDescriptor, TypedMakeNamesAllThreeParts)
     EXPECT_EQ(descriptor.reason(), "unknown");
 }
 
+TEST(CoreErrorDescriptor, NamesTheLoggersError)
+{
+    // What 'Logger::register_current_thread' returns when every slot is
+    // taken; the typed and the erased form describe it the same way.
+    const Error error = Error::make(Error::Kind::e_EXHAUSTED,
+                                    Error::CoreReason::e_LOG_TOO_MANY_THREADS,
+                                    32);
+
+    for (const auto& descriptor : {
+             ErrorDescriptor::make<Error::CoreReason>(error),
+             ErrorDescriptor::make(error),
+         }) {
+        EXPECT_EQ(descriptor.domain(), "core");
+        EXPECT_EQ(descriptor.kind(), "exhausted");
+        EXPECT_EQ(descriptor.reason(), "log_too_many_threads");
+    }
+}
+
 TYPED_TEST(CoreErrorCatalogReason, ErasedMakeAgreesWithTypedMake)
 {
     // The logger only ever holds a propagated 'Error', whose reason type is

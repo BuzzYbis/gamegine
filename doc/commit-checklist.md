@@ -9,7 +9,8 @@ described in [ci/README.md](../ci/README.md).
 
 - [ ] **Format.** `xmake format` (clang-format, then the BDE pass). Your
       editor's clang-format undoes the BDE banners, so formatting on save is
-      not enough.
+      not enough. It also fails on a pointer data member without `_p`
+      (`d_shared_p`, smart pointers included), which only you can rename.
 - [ ] **Push tier.** `xmake ci-check` passes: format, Lua, the CI tooling's
       tests, the unit tests, the pins. It is what the runner runs, in the
       runner's order.
@@ -41,12 +42,33 @@ described in [ci/README.md](../ci/README.md).
       ```
 - [ ] **No exceptions.** Nothing throws or catches (D9); a fallible call
       returns a `Result` or a `Status`.
+- [ ] **ThreadSanitizer, for anything threaded.** Run the tests under
+      `-fsanitize=thread` as well as ASan+UBSan, and repeat them
+      (`--gtest_repeat=20`). A plain run does not see a missing `release` or
+      `acquire`; TSan does, but only on accesses of up to 8 bytes, so the
+      ordering tests use 8-byte values.
+- [ ] **A skipped test is not a passed one.** A test that cannot run in this
+      build says so with `GTEST_SKIP()` (the death tests of an `assert` do
+      under `NDEBUG`), and `xmake ci-unit` lists them. Run the suite in a
+      debug build too, where they run.
 
 ## A new or changed component
 
 - [ ] **Tests.** The component has its `<component>.t.cpp`, testing the
       edges: buffer ends, values no enumerator names, sentinels. A fixed bug
       gets a test that fails without the fix.
+- [ ] **The tests can fail.** For each behaviour that matters, break it in a
+      scratch copy of the header (a wrong shift, a `<` for a `<=`, a weaker
+      memory order) and see a test fail. A test over fields that are all
+      zero, or over tables with one identical entry, cannot see a swapped
+      mask or a wrong table: give each field a value of its own.
+- [ ] **A guarantee made at compile time has a compile-fail snippet** in
+      `ci/test/compile_fail/`: the mistake, and its valid twin selected by
+      `-DGOOD`, so it fails for the reason it names. `xmake ci-test` runs
+      them with every compiler on the machine.
+- [ ] **A benchmark checks its own result.** Every value that went through
+      came out right, or the benchmark skips itself with an error: a rate
+      for a broken ring is worse than none.
 - [ ] **Header documentation**, as in
       [CodingStandards(fromBDE_almost).pdf](CodingStandards(fromBDE_almost).pdf):
       `@PURPOSE` (one imperative line), `@CLASSES`, `@SEE_ALSO`,

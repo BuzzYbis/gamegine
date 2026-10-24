@@ -278,7 +278,7 @@ target("tests")
 target("benchmarks")
     set_kind("binary")
     set_default(false)
-    add_rules("gamegine.warnings", "gamegine.werror")
+    add_rules("gamegine.warnings", "gamegine.werror", "gamegine.no_exceptions")
 
     -- Engine dependency
     add_deps("gamegine")

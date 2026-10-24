@@ -75,10 +75,16 @@ jobs:
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: '3.1.1'
+      # The sources are formatted with clang-format 23, and other versions
+      # lay code out differently: Ubuntu's apt package is 18, which reports
+      # correct files as unformatted. Same major as CLANG_FORMAT_MAJOR in
+      # ci/lua/formatter.lua, which makes 'ci-format' fail with a clear
+      # message if the two ever disagree.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang-format
+        run: pip install 'clang-format==23.*'
       - name: Check formatting
         run: xmake ci-format
 

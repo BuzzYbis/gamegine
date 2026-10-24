@@ -63,7 +63,7 @@ TEST(CoreClock, NeverRunsBackwards)
 {
     // A million reads in a row on one thread.
     std::uint64_t previous = Clock::now();
-    for (int i = 0; i < 1'000'000; ++i) {
+    for (std::int32_t i = 0; i < 1'000'000; ++i) {
         const std::uint64_t current = Clock::now();
         ASSERT_GE(current, previous) << "read " << i;
         previous = current;

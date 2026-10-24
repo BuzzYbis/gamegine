@@ -116,13 +116,16 @@ class [[nodiscard("An error shall not be discarded")]] Error final {
     /// its domain.
     enum class Kind : std::uint8_t {
         e_UNKNOWN = 0,  // no more precise kind
+        e_EXHAUSTED,    // a fixed capacity is full: no room for one more
 
         e_COUNT,  // number of kinds: always last, never raised
     };
 
     /// Enumeration used to identify why the [core] subsystem failed.
     enum class CoreReason : std::uint16_t {
-        e_UNKNOWN = 0,  // no more precise reason
+        e_UNKNOWN = 0,           // no more precise reason
+        e_LOG_TOO_MANY_THREADS,  // the logger has all its threads registered;
+                                 // the context is that limit
 
         e_COUNT,  // number of reasons: always last, never raised
     };
