@@ -86,6 +86,12 @@ end
 -- =============================================================================
 -- Compiler Flags
 
+-- The 'tools' filter below names the compiler by xmake's tool name, and
+-- xmake calls 'g++' "gxx", not "gcc": without "gxx" the filter silently drops
+-- every flag of these rules under GCC, and a Linux build runs with no
+-- warnings, no -Werror and exceptions enabled. "clang" already matches
+-- 'clang++'; xmake trims the "xx" before comparing.
+
 rule("gamegine.warnings")
     on_load(function (target)
         target:add("cxxflags",
@@ -111,7 +117,17 @@ rule("gamegine.warnings")
             "-Wconversion",
             -- Warn on implicit conversions between signed and unsigned types.
             "-Wsign-conversion",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
+        )
+        -- xmake keeps the flags of Objective-C++ (.mm) apart from those of
+        -- C++: without this line the .mm files of platform/ build with none
+        -- of the warnings above.
+        target:add("mxxflags",
+            "-Wall", "-Wextra", "-Wpedantic", "-Wshadow",
+            "-Wnon-virtual-dtor", "-Wold-style-cast", "-Wcast-align",
+            "-Wunused", "-Woverloaded-virtual", "-Wconversion",
+            "-Wsign-conversion",
+            {tools = {"clang", "apple_clang"}}
         )
     end)
 rule_end()
@@ -125,7 +141,9 @@ rule_end()
 rule("gamegine.no_exceptions")
     on_load(function (target)
         target:add("cxxflags", "-fno-exceptions",
-                   {tools = {"clang", "gcc", "apple_clang"}})
+                   {tools = {"clang", "gcc", "gxx", "apple_clang"}})
+        target:add("mxxflags", "-fno-exceptions",
+                   {tools = {"clang", "apple_clang"}})
         target:add("defines", "GTEST_HAS_EXCEPTIONS=0")
     end)
 rule_end()
@@ -135,8 +153,9 @@ rule("gamegine.werror")
         target:add("cxxflags",
             -- Treat all warnings as compilation errors.
             "-Werror",
-            {tools = {"clang", "gcc", "apple_clang"}}
+            {tools = {"clang", "gcc", "gxx", "apple_clang"}}
         )
+        target:add("mxxflags", "-Werror", {tools = {"clang", "apple_clang"}})
     end)
 rule_end()
 
@@ -160,6 +179,13 @@ add_requires("gtest", {configs = {main = true}})
 
 -- Google Benchmark framework
 add_requires("benchmark")
+
+-- Window and events (platform/). Behind engine::platform::Window, so no GLFW
+-- header leaks into ours. Linux builds the X11 backend, which also serves a
+-- Wayland desktop through XWayland; the package's 'wayland' config builds
+-- Wayland from source, and is switched on when Profile L needs it, with the
+-- NativeSurface::Kind::e_WAYLAND the interface already reserves.
+add_requires("glfw 3.4")
 
 -- Mesh optimization: clusterization, simplification and codecs (D0).
 -- Pinned to an exact commit because clusterlod.h needs APIs that no release
@@ -190,7 +216,12 @@ target("gamegine")
     -- (core_error.h) are header-only by design. This lets the tests build and
     -- run against headers before the first .cpp lands, instead of the test
     -- environment being unprovable until then.
-    if #os.files(path.join(os.scriptdir(), "gamegine/src/**.cpp")) > 0 then
+    local has_sources = #os.files(path.join(os.scriptdir(),
+                                           "gamegine/src/**.cpp")) > 0
+    local has_objcxx = is_plat("macosx") and
+                       #os.files(path.join(os.scriptdir(),
+                                           "gamegine/src/**.mm")) > 0
+    if has_sources or has_objcxx then
         set_kind("static")
     else
         set_kind("headeronly")
@@ -217,7 +248,7 @@ target("gamegine")
     -- Guarded for the same reason as the kind above: xmake warns on a
     -- pattern that matches nothing, and a warning that is expected is a
     -- warning people learn to ignore.
-    if #os.files(path.join(os.scriptdir(), "gamegine/src/**.cpp")) > 0 then
+    if has_sources then
         add_files("gamegine/src/**.cpp")
         for _, pattern in ipairs({"gamegine/src/**.t.cpp",
                                   "gamegine/src/**.b.cpp",
@@ -228,8 +259,16 @@ target("gamegine")
         end
     end
 
+    -- Objective-C++ (AppKit and Metal are Objective-C), macOS only, with
+    -- automatic reference counting. A '.mm' is a source like a '.cpp'; the
+    -- same suffix conventions apply.
+    if has_objcxx then
+        add_files("gamegine/src/**.mm")
+        add_mxxflags("-fobjc-arc")
+    end
+
     -- Dependencies
-    add_packages("vulkansdk", "fastgltf", "meshoptimizer", {public = true})
+    add_packages("vulkansdk", "fastgltf", "meshoptimizer", "glfw", {public = true})
 
     -- clusterlod.h is a single header vendored from the upstream demo/
     -- directory at the same commit as meshoptimizer. It is integrated, not
@@ -304,7 +343,7 @@ target("tests")
 target("benchmarks")
     set_kind("binary")
     set_default(false)
-    add_rules("gamegine.warnings", "gamegine.werror")
+    add_rules("gamegine.warnings", "gamegine.werror", "gamegine.no_exceptions")
 
     -- Engine dependency
     add_deps("gamegine")

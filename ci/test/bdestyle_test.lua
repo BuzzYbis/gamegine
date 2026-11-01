@@ -9,6 +9,11 @@
 --
 -- Rules are those of doc/CodingStandards(fromBDE_almost).pdf; the rule
 -- number is given with each case.
+--
+-- The naming rule at the end is ours, not the standard's, and has no rewrite:
+-- problems() only reports. It reads source text with no parser, so what it
+-- must NOT flag is tested as hard as what it must: an array of pointers, a
+-- view, a multiplication that looks like a declaration, a comment.
 
 import("testing", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 import("bdestyle", {rootdir = path.join(os.projectdir(), "ci", "lua")})
@@ -192,4 +197,140 @@ function run(t)
     testing.equal(t, "a missing final newline stays missing",
                   bdestyle.apply("int x;"), "int x;")
     testing.equal(t, "an empty file stays empty", bdestyle.apply(""), "")
+
+    -- ----------------------------------------- naming: pointer members ---
+
+    -- The names a text is reported for, in order, and their line numbers.
+    local function reported(text)
+        local names, lines = {}, {}
+        for _, p in ipairs(bdestyle.problems(text)) do
+            table.insert(names, p.message:match("'(.-)'"))
+            table.insert(lines, p.line)
+        end
+        return table.concat(names, ","), table.concat(lines, ",")
+    end
+
+    local function flagged(label, declaration, name)
+        local names = reported(declaration .. "\n")
+        testing.equal(t, "naming: " .. label, names, name)
+    end
+
+    local function accepted(label, text)
+        local names = reported(text .. "\n")
+        testing.equal(t, "naming: " .. label, names, "")
+    end
+
+    -- A pointer member without the suffix is reported, whatever the pointer.
+    flagged("a raw pointer", "    Producer* d_producer;", "d_producer")
+    flagged("a pointer to const", "    const char* d_name;", "d_name")
+    flagged("a const pointer", "    Producer* const d_producer;", "d_producer")
+    flagged("a pointer to a qualified type", "    engine::core::Foo* d_foo;",
+            "d_foo")
+    flagged("a pointer to a template", "    std::vector<int>* d_list;",
+            "d_list")
+    flagged("a pointer with an initializer", "    Producer* d_ptr = nullptr;",
+            "d_ptr")
+    flagged("a pointer with a brace initializer", "    Producer* d_ptr{};",
+            "d_ptr")
+    flagged("a unique_ptr",
+            "    std::unique_ptr<Producer> d_shared;", "d_shared")
+    flagged("a unique_ptr with a deleter",
+            "    std::unique_ptr<Impl, Deleter> d_impl;", "d_impl")
+    flagged("a shared_ptr", "    std::shared_ptr<Impl> d_impl;", "d_impl")
+    flagged("a weak_ptr", "    std::weak_ptr<Impl> d_impl;", "d_impl")
+    flagged("an atomic pointer",
+            "    std::atomic<Producer*> d_head;", "d_head")
+    flagged("class data", "    static Producer* s_instance;", "s_instance")
+    flagged("thread-local class data",
+            "    static thread_local Producer* s_current;", "s_current")
+    flagged("a mutable smart pointer",
+            "    mutable std::unique_ptr<Cache> d_cache;", "d_cache")
+    flagged("a member with a comment after it",
+            "    Producer* d_producer;  // null once moved from", "d_producer")
+    flagged("a member with no space between the type and its star's name",
+            "    Producer*  d_producer;", "d_producer")
+
+    -- Several in one text, in order, with their lines.
+    local names, lines = reported(
+        "class A {\n"
+        .. "    int d_count;\n"
+        .. "    Foo* d_foo;\n"
+        .. "    std::span<char> d_view;\n"
+        .. "    std::unique_ptr<Bar> d_bar;\n"
+        .. "};\n")
+    testing.equal(t, "naming: every pointer member is reported", names,
+                  "d_foo,d_bar")
+    testing.equal(t, "naming: with its own line number", lines, "3,5")
+
+    -- The message says which name to use.
+    local problem = bdestyle.problems("    Foo* d_foo;\n")[1]
+    testing.check(t, "naming: the message gives the name to use",
+                  problem ~= nil and problem.message:find("'d_foo_p'", 1, true)
+                      ~= nil,
+                  problem and problem.message or "no problem")
+    testing.check(t, "naming: and the text of the line",
+                  problem ~= nil and problem.text == "    Foo* d_foo;",
+                  problem and problem.text or "no problem")
+
+    -- A pointer member with the suffix is fine, of every kind.
+    accepted("a raw pointer with the suffix", "    Producer* d_producer_p;")
+    accepted("a unique_ptr with the suffix",
+             "    std::unique_ptr<Producer> d_shared_p;")
+    accepted("an atomic pointer with the suffix",
+             "    std::atomic<Producer*> d_head_p;")
+    accepted("class data with the suffix", "    static Foo* s_instance_p;")
+    accepted("a suffixed member with an initializer",
+             "    Producer* d_producer_p = nullptr;")
+
+    -- What is not a pointer takes no suffix, and is not reported.
+    accepted("an integer", "    std::uint64_t d_count = 0;")
+    accepted("a span", "    std::span<char> d_buffer;")
+    accepted("a string_view", "    std::string_view d_name;")
+    accepted("an optional", "    std::optional<Producer> d_producer;")
+    accepted("a reference", "    Producer& d_producer;")
+    accepted("an array of pointers", "    Producer* d_slots[4];")
+    accepted("a std::array of atomic pointers",
+             "    std::array<std::atomic<Producer*>, 32> d_slots{};")
+    accepted("a std::array of pointers",
+             "    std::array<Producer*, 32> d_slots;")
+    accepted("a std::array of unique_ptr",
+             "    std::array<std::unique_ptr<Producer>, 4> d_producers;")
+    accepted("a vector of unique_ptr",
+             "    std::vector<std::unique_ptr<Producer>> d_producers;")
+    accepted("a vector of pointers", "    std::vector<Producer*> d_producers;")
+    accepted("an atomic integer", "    std::atomic_uint64_t d_dropped{0};")
+    accepted("a std::atomic of an integer", "    std::atomic<Phase> d_phase;")
+    accepted("a member that merely has a pointer in its comment",
+             "    std::uint64_t d_count;  // a Foo* d_foo")
+
+    -- Names that are not data members are not looked at.
+    accepted("a constant", "    static constexpr const char* k_NAME = \"x\";")
+    accepted("a local", "    Producer* const producer = slot.get();")
+    accepted("a data member with no prefix", "    Producer* producer;")
+
+    -- Uses of a member look like declarations to a line reader; none is one.
+    accepted("a call through a member", "    d_producer->push(record);")
+    accepted("a return", "    return d_producer;")
+    accepted("a return of a product",
+             "    return count * d_size;")
+    accepted("a product assigned", "    const auto bytes = count * d_size;")
+    accepted("a delete", "    delete d_producer;")
+    accepted("an assignment", "    x = d_producer;")
+    accepted("a comparison", "    if (d_producer != nullptr) {")
+    accepted("an initializer list entry", ": d_producer(&producer)")
+    accepted("a later initializer", ", d_shared(std::make_unique<P>())")
+    accepted("a dereference", "    Producer& p = *d_producer;")
+    accepted("a throw", "    throw d_error;")
+    accepted("a loop bound", "    for (i = 0; i < d_count; ++i) {")
+
+    -- Comments are never code.
+    accepted("a line comment", "    // Producer* d_producer;")
+    accepted("a documentation comment", "    /// Producer* d_producer;")
+    accepted("a commented example",
+             "//  std::unique_ptr<Producer> d_shared;")
+
+    testing.equal(t, "naming: an empty text has no problems",
+                  #bdestyle.problems(""), 0)
+    testing.equal(t, "naming: a missing final newline is read all the same",
+                  #bdestyle.problems("    Foo* d_foo;"), 1)
 end

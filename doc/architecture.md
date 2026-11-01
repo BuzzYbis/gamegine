@@ -61,9 +61,32 @@ caps (D7) and whose admission is against a measured limit (D4), terminating on
 an allocation nobody budgeted for is the honest outcome; the alternative is
 unwinding into a state the memory accounting no longer describes.
 
-*Errors carry no heap.* `core::Error` is a code, a static message and a source
-location. It allocates nothing, so returning one is safe on the paths that are
-failing precisely because memory is short.
+*Errors carry no heap.* `core::Error` is a single 64-bit value: an 8-bit
+domain, an 8-bit kind, a 16-bit domain-specific reason and a 32-bit numeric
+context. It allocates nothing, so returning one is safe on the paths that are
+failing precisely because memory is short, and it is trivially copyable, so it
+is returned in a register and copied into the logger's ring by `memcpy`.
+
+*An error records no source location.* Carrying a `std::source_location`
+would double or quadruple the log record — 8 bytes on libc++, around 24 on
+libstdc++ — for information a sufficiently specific reason enumerator already
+conveys, and more usefully: `e_SWAPCHAIN_ACQUIRE_TIMEOUT` survives a
+refactor, reads without a lookup table, and is greppable, where a file and
+line do none of those. Two consequences follow, and both are deliberate:
+
+- **Reason enumerators must be granular.** They are now the only thing
+  identifying where a failure came from. A reason used in forty places says
+  nothing, so the budget exists to avoid that: 16 bits is 65,536 reasons per
+  domain, which is more than one per failure site the engine will ever have.
+  `e_UNKNOWN` surviving in a log is a defect to fix, not a value to accept.
+- **The 32-bit context stays free for a payload.** A page id, a byte offset
+  or a cluster index identifies a failure more precisely than a line number
+  does, and cannot be reconstructed from anywhere else.
+
+It also removes a coupling that would otherwise have been load-bearing: a
+location captured in the logger is only correct if errors are logged where
+they are created, which in turn forces a policy about propagating without
+re-logging. With no location to capture, propagation is free to be silent.
 
 ### D0 — what this project is for
 
@@ -229,7 +252,8 @@ flowchart TD
 | [`clusterlod.h`](https://github.com/zeux/meshoptimizer/blob/master/demo/clusterlod.h) | MIT, single header | Cluster-group DAG build. Configure, feed a mesh, receive groups of clusters via callback |
 | [Slang](https://github.com/shader-slang/slang) | MIT | Shader source to SPIR-V and MSL |
 | Physics library | — | Character controller and collision proxies |
-| Window and input, image codecs, CMake | — | |
+| [GLFW](https://www.glfw.org/) 3.4 | zlib | Window, events, cursor, native handles, behind `engine::platform::Window`: no GLFW header is in ours. X11 on Linux (also serves Wayland desktops through XWayland); native Wayland and AppKit stay possible behind the same interface |
+| Image codecs, CMake | — | |
 
 Versions and commits are pinned and recorded in every manifest. `clusterlod.h`'s API is explicitly evolving upstream, so a version bump is treated as a content format change requiring a re-cook and a named new baseline.
 

@@ -334,7 +334,8 @@ task("ci-format")
     set_menu {
         usage       = "xmake ci-format [--fix]",
         description = "Check first-party sources against .clang-format "
-                      .. "and the BDE rules it cannot express.",
+                      .. "and the BDE rules it cannot express, and report "
+                      .. "the naming rule no formatter can apply.",
         options = {
             {nil, "fix", "k", nil, "Rewrite files in place instead of "
                                    .. "reporting them."},
@@ -355,6 +356,12 @@ task("ci-format")
         if version.status ~= "OK" then
             raise("clang-format is not available: %s", version.reason)
         end
+        -- Checked before any file is: a different version reports files as
+        -- unformatted that are fine, which reads as a problem in the code.
+        local problem = formatter.version_problem(version.value)
+        if problem then
+            raise("%s", problem)
+        end
 
         local files = sources.list()
         if #files == 0 then
@@ -365,37 +372,60 @@ task("ci-format")
 
         local fix = option.get("fix")
         local offenders = {}
+        local naming = {}
 
         for _, f in ipairs(files) do
             local original = io.readfile(f)
             local text, reason = formatter.format_text(original, f)
             if text == nil then
                 raise("%s: %s", path.relative(f, os.projectdir()), reason)
-            elseif text ~= original then
+            end
+            if text ~= original then
                 if fix then
                     io.writefile(f, text)
                 else
                     table.insert(offenders, f)
                 end
             end
+            -- Looked at in the formatted text, which is what the file holds
+            -- once formatted. Nothing rewrites these, in either mode: a
+            -- rename has to follow the uses.
+            for _, problem in ipairs(formatter.problems(text)) do
+                table.insert(naming, {file = f, problem = problem})
+            end
         end
 
         if fix then
             style.say("${ok}formatted %d file(s): clang-format %s, then the "
                    .. "BDE pass", #files, version.value)
-            return
+        end
+        for _, f in ipairs(offenders) do
+            style.say("${bad}needs formatting${reset} %s",
+                   path.relative(f, os.projectdir()))
+        end
+        for _, n in ipairs(naming) do
+            style.say("${bad}naming${reset} %s:%d: %s",
+                   path.relative(n.file, os.projectdir()), n.problem.line,
+                   n.problem.message)
         end
 
+        local failures = {}
         if #offenders > 0 then
-            for _, f in ipairs(offenders) do
-                style.say("${bad}needs formatting${reset} %s",
-                       path.relative(f, os.projectdir()))
-            end
-            raise("%d of %d file(s) are not formatted; run "
-                  .. "'xmake format'", #offenders, #files)
+            table.insert(failures, ("%d of %d file(s) are not formatted; run "
+                                    .. "'xmake format'"):format(#offenders,
+                                                                #files))
         end
-        style.say("${ok}%d file(s) formatted correctly "
-               .. "(clang-format %s)", #files, version.value)
+        if #naming > 0 then
+            table.insert(failures, ("%d naming problem(s) to fix by hand: "
+                                    .. "no formatter renames"):format(#naming))
+        end
+        if #failures > 0 then
+            raise("%s", table.concat(failures, "; "))
+        end
+        if not fix then
+            style.say("${ok}%d file(s) formatted correctly "
+                   .. "(clang-format %s)", #files, version.value)
+        end
     end)
 task_end()
 
@@ -991,9 +1021,10 @@ task("ci-test")
         -- These guard parsers and validators that run on machines nobody is
         -- watching. They need no GPU and no engine, so they run in the cloud
         -- push tier alongside the other cheap checks.
-        local suites = {"probe_test", "powermetrics_test",
+        local suites = {"probe_test", "powermetrics_test", "style_test",
                         "jsonschema_test", "machine_test",
-                        "bench_test", "bdestyle_test",
+                        "bench_test", "bdestyle_test", "formatter_test",
+                        "compile_fail_test",
                         "shaders_test", "device_probes_test",
                         "ratios_test"}
 
@@ -1017,6 +1048,9 @@ task("ci-test")
                     if f.detail ~= "" then
                         style.say("${dim}         %s", f.detail)
                     end
+                    style.annotate("error", name,
+                                   f.label .. (f.detail ~= "" and ("\n" ..
+                                   f.detail) or ""))
                 end
             end
         end
@@ -1412,30 +1446,36 @@ task("ci-unit")
         import("style", {rootdir = path.join(os.projectdir(), "ci", "lua")})
         import("core.base.option")
         import("probe",   {rootdir = path.join(os.projectdir(), "ci", "lua")})
+        import("sources", {rootdir = path.join(os.projectdir(), "ci", "lua")})
 
         -- 'xmake test' exists, but its summary is printed by xmake itself in
         -- full-brightness truecolour that no project setting can reach. This
         -- task runs the same binary and reports through style.lua, so unit
         -- test output is readable on the same backgrounds as everything else.
-        --
-        -- The guard is on tests, not on C++: first-party code without a test
-        -- (vg_bench, for one) leaves the test target disabled in xmake.lua,
-        -- with nothing to build.
-        local tests = {}
-        for _, pattern in ipairs({"tests/**.t.cpp", "gamegine/src/**.t.cpp"}) do
-            table.join2(tests, os.files(path.join(os.projectdir(), pattern)))
-        end
-        if #tests == 0 then
-            style.say("${warn}no unit tests yet; nothing to test${reset}")
+        if #sources.translation_units() == 0 then
+            style.say("${warn}no translation units yet; nothing to test"
+                      .. "${reset}")
             return
         end
 
+        local build_log = os.tmpfile()
         local built = os.execv("xmake", {"build", "--yes", "tests"},
-                               {stdout = os.tmpfile(), stderr = os.tmpfile(),
+                               {stdout = build_log, stderr = build_log,
                                 try = true})
         if built ~= 0 then
+            -- The compiler's own words, not just that it failed.
+            local lines = {}
+            for line in (io.readfile(build_log) or ""):gmatch("[^\n]+") do
+                table.insert(lines, line)
+            end
+            local tail = table.concat(lines, "\n", math.max(1, #lines - 40),
+                                      #lines)
+            style.say("${dim}%s${reset}", tail)
+            style.annotate("error", "The test target failed to build", tail)
+            os.tryrm(build_log)
             raise("the test target failed to build")
         end
+        os.tryrm(build_log)
 
         local binaries = os.files(path.join(os.projectdir(), "build",
                                             "**", "tests"))
@@ -1452,16 +1492,44 @@ task("ci-unit")
                                  {lines = true, stream = "both",
                                   accept = {0, 1}, timeout = 600000})
         if record.status ~= "OK" then
+            -- A test binary that died (an abort, a signal) leaves its last
+            -- lines, which name the test it was running.
+            local lines = {}
+            for line in (record.output or ""):gmatch("[^\n]+") do
+                table.insert(lines, line)
+            end
+            local tail = table.concat(lines, "\n", math.max(1, #lines - 25),
+                                      #lines)
+            style.say("${dim}%s${reset}", tail)
+            style.annotate("error", "The unit tests did not finish",
+                           record.reason .. "\n" .. tail)
             raise("could not run the tests: %s", record.reason)
         end
 
         -- Parse GoogleTest's plain output rather than trusting an exit code,
         -- so the summary names what failed.
         local passed, failed, suites = 0, {}, nil
+        local skipped = {}
         for line in record.value:gmatch("[^\n]+") do
             local n = line:match("^%[%s*PASSED%s*%]%s+(%d+) test")
             if n then
                 passed = tonumber(n) or passed
+            end
+            -- A skipped test checked nothing in this build. It is never
+            -- counted as a pass: the death tests of an 'assert' skip
+            -- themselves when asserts are compiled out.
+            local skipped_name = line:match(
+                "^%[%s*SKIPPED%s*%]%s+([%w_]+%.[%w_]+)")
+            if skipped_name then
+                local seen = false
+                for _, f in ipairs(skipped) do
+                    if f == skipped_name then
+                        seen = true
+                    end
+                end
+                if not seen then
+                    table.insert(skipped, skipped_name)
+                end
             end
             local name = line:match("^%[%s*FAILED%s*%]%s+([%w_]+%.[%w_]+)")
             if name then
@@ -1495,11 +1563,32 @@ task("ci-unit")
             style.say("")
             style.say("${bad}%d failed${reset}, %d passed%s", #failed, passed,
                       suites and ("   (" .. suites .. ")") or "")
+
+            -- What GoogleTest said about them, without the lines of tests
+            -- that ran: the file, the line, and the values compared.
+            local said = {}
+            for line in record.value:gmatch("[^\n]+") do
+                if not (line:find("^%[ +OK +%]") or line:find("^%[ +RUN +%]")
+                        or line:find("^%[[-=]+%]")) then
+                    table.insert(said, line)
+                end
+            end
+            style.annotate("error", "Unit tests failed",
+                           table.concat(failed, ", ") .. "\n" ..
+                           table.concat(said, "\n"))
             raise("%d unit test(s) failed", #failed)
         end
 
         style.say("${ok}%d test(s) passed${reset}%s", passed,
                   suites and ("   ${dim}(" .. suites .. ")${reset}") or "")
+        if #skipped > 0 then
+            style.say("${warn}%d test(s) skipped, they checked nothing in "
+                   .. "this build (a debug build runs them):${reset}",
+                   #skipped)
+            for _, name in ipairs(skipped) do
+                style.say("${warn}  skipped${reset}  %s", name)
+            end
+        end
     end)
 task_end()
 

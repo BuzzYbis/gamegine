@@ -131,3 +131,35 @@ function status(kind, word)
     local token = CODES[kind] and kind or "note"
     return ("${%s}%-7s${reset}"):format(token, word or kind)
 end
+
+-- The text of a GitHub workflow command "::<level> title=<title>::<message>".
+-- The runner takes '%', CR and LF as the end of the command, and ':' and ','
+-- as the end of a property too, so they are written as %XX. A message past
+-- 'limit' characters (default 3000) is cut, its start kept.
+function annotation_text(level, title, message, limit)
+    local function escape(text, property)
+        text = tostring(text):gsub("%%", "%%25"):gsub("\r", "%%0D")
+                             :gsub("\n", "%%0A")
+        if property then
+            text = text:gsub(":", "%%3A"):gsub(",", "%%2C")
+        end
+        return text
+    end
+    message = tostring(message)
+    limit = limit or 3000
+    if #message > limit then
+        message = message:sub(1, limit) .. " [cut]"
+    end
+    return ("::%s title=%s::%s"):format(level, escape(title, true),
+                                        escape(message))
+end
+
+-- Print an annotation when running under GitHub Actions, and nothing
+-- elsewhere. A job's log needs a login to read, an annotation does not: it is
+-- in the check run, in the API and on the summary page. So a failure that
+-- happens only on a hosted runner is read from the annotations it leaves.
+function annotate(level, title, message)
+    if os.getenv("GITHUB_ACTIONS") == "true" then
+        print(annotation_text(level, title, message))
+    end
+end

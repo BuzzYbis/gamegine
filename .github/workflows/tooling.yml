@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 BuzzY_ & Rether
+#
+# The CI tooling's own checks: its tests (parsers, validators, the compile-fail
+# snippets) and the benchmark harness, end to end. They test the tooling and not
+# the engine, so they run when the tooling changes, every night, and on demand,
+# not on every push. The engine's unit tests are in push.yml.
+#
+# Every job has a timeout. A probe that hangs on a hosted runner otherwise holds
+# it for six hours.
+
+name: tooling
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'ci/**'
+      - 'xmake.lua'
+      - '.github/workflows/tooling.yml'
+  pull_request:
+    paths:
+      - 'ci/**'
+      - 'xmake.lua'
+      - '.github/workflows/tooling.yml'
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: tooling-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # CPU fixtures. At R0 these are the CI tooling's own tests -- parsers and
+  # validators that run on machines nobody is watching. The math test vectors,
+  # quantization round-trips and cut-validity tests join them as they land.
+  # No GPU, no engine.
+  tests:
+    name: CPU fixtures (CI tooling)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Run the CI tooling tests
+        run: xmake ci-test
+
+  # The harness, end to end: capture the machine manifest,
+  # emit a T1 bundle, and validate its layout. No GPU and no engine needed --
+  # at R0 every fixture reports NOT_RUN with its reason, which is exactly what
+  # should be asserted. A harness that stops producing valid bundles is found
+  # here, not at a release boundary when the bundle is the evidence.
+  #
+  # This is also the only place ci-machine and ci-bundle run in CI.
+  harness:
+    name: benchmark harness (T1)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Capture the machine manifest
+        run: xmake ci-machine -o "machine-${{ matrix.os }}.json"
+
+      - name: Emit a T1 bundle
+        run: xmake bench --tier=T1 --out="results/ci/${{ github.sha }}" --no-power
+
+      - name: Validate the bundle layout
+        run: xmake ci-bundle "results/ci/${{ github.sha }}"
+
+      # A hosted runner is not in ci/machines.json, so it must resolve to
+      # 'development' and its bundle must not claim to be evidence. If that
+      # ever inverts, a cloud run could be archived behind a published claim.
+      - name: Assert a cloud runner produces no evidence
+        shell: bash
+        run: |
+          manifest="results/ci/${{ github.sha }}/manifest.json"
+          role=$(grep -o '"machine_role":"[^"]*"' "$manifest" | cut -d'"' -f4)
+          eligible=$(grep -o '"evidence_eligible":[a-z]*' "$manifest" | cut -d: -f2)
+          echo "machine_role=$role evidence_eligible=$eligible"
+          if [ "$role" != "development" ] || [ "$eligible" != "false" ]; then
+            echo "::error title=Cloud runner claimed evidence eligibility::A hosted runner is not qualification hardware. It must resolve to 'development' with evidence_eligible=false, or mock runs can be archived as evidence."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-${{ matrix.os }}
+          path: |
+            results/ci/${{ github.sha }}
+            machine-${{ matrix.os }}.json
+          retention-days: 14

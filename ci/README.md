@@ -20,7 +20,7 @@ runs before pushing.
 | --- | --- | --- |
 | `xmake ci-check` | The whole push tier, in the runner's order | — |
 | `xmake format` | Formats first-party sources: clang-format, then the BDE pass. Run before pushing. Overrides xmake's built-in `format` plugin | — |
-| `xmake ci-format` | Checks the same, without rewriting: `.clang-format`, then the BDE rules clang-format cannot keep (`// RETURN`, `// IMPLICIT`, banners). `--fix` rewrites them | — |
+| `xmake ci-format` | Checks the same, without rewriting: `.clang-format`, then the BDE rules clang-format cannot keep (`// RETURN`, `// IMPLICIT`, banners). `--fix` rewrites them. Also reports the naming rule below, which nothing can rewrite | — |
 | `xmake ci-shaders` | Compiles every Slang kernel for this host's targets and reports each outcome. `--self-test` proves the toolchain on its fixtures | **B0.1**, **B0.2** |
 | `xmake ci-shader-hash` | Recomputes the shader hash from the compiled artifacts. `--stamp` writes it into a run manifest | — |
 | `xmake ci-pins` | Verifies `pins.json` against the machine | **B0.4** |
@@ -28,13 +28,13 @@ runs before pushing.
 | `xmake ci-schema` | Validates JSON documents against a schema | — |
 | `xmake ci-bundle` | Validates a result bundle's layout | — |
 | `xmake ci-inventory` | Reports which CI inputs exist yet, and which do not | — |
-| `xmake ci-test` | Runs the CI tooling's own tests | — |
+| `xmake ci-test` | Runs the CI tooling's own tests, and the compile-fail snippets of `ci/test/compile_fail/`: each C++ mistake the headers promise to reject, with a valid twin, built with every compiler found | — |
 | `xmake bench` | Runs a benchmark tier and emits a result bundle, with the vg_bench device probes (`--no-probes` skips them) | **bench/** |
 | `xmake ci-ratios` | Derives the per-workload Apple-to-Linux ratios from an Apple bundle and a Linux one, into `ratios.json` | **B0** |
 | `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
 | `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
 | `xmake ci-style` | Previews the output palette in your terminal | — |
-| `xmake ci-unit` | Builds and runs the C++ unit tests | — |
+| `xmake ci-unit` | Builds and runs the C++ unit tests, and lists the ones skipped in this build (a death test skips itself when `assert` is compiled out) | — |
 | `xmake ci-coverage` | Line, function and branch coverage of `gamegine/` | — |
 | `xmake ci-coverage-html` | Per-line annotated HTML report, in `build/coverage/html/` | — |
 
@@ -72,7 +72,7 @@ ci/
 │   ├── sources.lua          which files are ours to police
 │   ├── lualint.lua          dead code and sandbox traps
 │   ├── formatter.lua        clang-format, then the BDE pass
-│   ├── bdestyle.lua         the BDE rules clang-format cannot keep
+│   ├── bdestyle.lua         the BDE rules clang-format cannot keep, and the `_p` naming report
 │   ├── coverage.lua         source-based coverage of gamegine/
 │   ├── style.lua            output readable on any background
 │   └── testing.lua          assertions for the Lua tests
@@ -87,7 +87,21 @@ ci/
     └── examples/                     committed tripwire fixtures
 ```
 
-`.github/workflows/push.yml` is the push and pull-request tier.
+`.github/workflows/push.yml` is the push and pull-request tier: format, the
+host build and unit tests on Ubuntu and macOS in debug and release, schema,
+pins and shaders. `.github/workflows/tooling.yml` runs the tooling's own tests
+(`ci-test`) and the harness (`ci-machine`, `bench`, `ci-bundle`). They test the
+tooling and not the engine, so they start when `ci/` or `xmake.lua` change,
+every night, and on demand, not on every push. Every job has a timeout, so a
+hang costs minutes and not the six hours GitHub allows.
+
+On Linux, `ci-tidy` runs clang-tidy 23 from pip, like the clang-format of the
+format job. Ubuntu's apt clang-tidy is 18, which cannot read `<expected>`
+against libstdc++ 13 (clang before 19 reports a smaller `__cpp_concepts` than
+libstdc++ asks for). For the same reason `ci-test` names a compiler that cannot
+build the headers of `engine/core` (clang 18 here, and GCC 12, which has no
+`<format>`) and leaves it out of the compile-fail snippets, and fails only if
+none is left.
 
 ---
 
@@ -256,6 +270,15 @@ The general rule: if the editor and `xmake ci-format` disagree, they are
 running different libFormat versions. `ci-format` is the authority — it is
 what the runner uses.
 
+**The same goes for CI, and `ci-format` enforces it.** Ubuntu's apt
+`clang-format` is 18, which indents the continuation line of a wrapped call
+differently from 23, so a runner using it reported four correct test files as
+"needs formatting". The sources are formatted with clang-format **23**
+(`required_major()` in `ci/lua/formatter.lua`), the workflow installs
+`clang-format==23.*` with pip, and `xmake ci-format` stops with the version it
+found and how to install the right one if it is any other major. Change the
+pin in both places together; `ci-test` covers the check.
+
 **Some BDE rules are not clang-format's to keep** (rule numbers from
 `doc/CodingStandards(fromBDE_almost).pdf`):
 
@@ -290,6 +313,45 @@ form, so a push that skipped it fails on formatting rather than slipping
 through.
 
 The pass places the tags that are there; it does not add a *missing* one.
+
+### The naming rule: `d_` on every data member
+
+The standard's rule 6.5.3: a non-static data member begins with `d_`, a static
+one with `s_`. It has no exception for a plain `struct`, and its own example of
+one (`LinkedList_Link`) has `d_data` and `d_next_p`. So the public data of an
+attribute `struct` is `d_width`, and a call site reads
+`{.d_title = "gamegine", .d_width = 1920}`.
+
+`xmake ci-tidy` enforces it with `readability-identifier-naming`
+(`PrivateMemberPrefix`, `ProtectedMemberPrefix`, `PublicMemberPrefix` and
+`ClassMemberPrefix` in `.clang-tidy`), in tests and benchmarks too. Unlike the
+`_p` rule below it can be fixed by the tool: `xmake ci-tidy --fix` renames the
+member and every use of it.
+
+### The naming rule: `_p` on every pointer member
+
+One rule is ours, not the standard's, and **it is reported, never fixed**:
+a data member that is a pointer, or owns one, ends in `_p` after its prefix.
+The standard keeps `_p` for raw pointers; here a smart pointer takes it too,
+so that `->` on a member shows an indirection whatever its type.
+
+| Member | Takes `_p` |
+| --- | --- |
+| `Producer* d_producer_p`, `const char* d_name_p` | yes |
+| `std::unique_ptr<T>`, `std::shared_ptr<T>`, `std::weak_ptr<T>` | yes, `d_shared_p` |
+| `std::atomic<T*>` | yes |
+| class data (`s_`) of any of those | yes, `s_current_p` |
+| `std::span`, `std::string_view`, `std::optional`, a reference | no, not a pointer |
+| `Producer* d_slots[4]`, `std::array<T*, N>`, `std::vector<std::unique_ptr<T>>` | no, an array or container |
+| constants (`k_`) | no |
+
+`xmake ci-format` and `xmake format` both print each offender as
+`file:line: pointer data member 'd_x' takes a '_p' suffix: 'd_x_p'` and fail:
+a rename has to follow the uses, which no formatter can see. The check
+(`bdestyle.problems`) reads text with no parser, one line at a time, so it
+sees a member declared on a single line (`<type> d_name;`, `= ...;`, `{...};`)
+and nothing else. It only looks for a *missing* suffix: a `_p` on something
+that is not a pointer is not reported.
 
 ---
 
