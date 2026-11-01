@@ -295,8 +295,11 @@ end
 local PM_SAMPLERS = "cpu_power,gpu_power,thermal"
 local PM_ARGS = {"--samplers", PM_SAMPLERS, "-n", "1", "-i", "1000"}
 
+local PM_TIMEOUT_MS = 20000
+
 function _powermetrics_capture()
-    local direct = probe.run("powermetrics", PM_ARGS, {lines = true})
+    local direct = probe.run("powermetrics", PM_ARGS,
+                             {lines = true, timeout = PM_TIMEOUT_MS})
     if direct.status == "OK" then
         return direct, probe.ok("direct", direct.source)
     end
@@ -305,7 +308,8 @@ function _powermetrics_capture()
     for _, a in ipairs(PM_ARGS) do
         table.insert(sudoargs, a)
     end
-    local viasudo = probe.run("sudo", sudoargs, {lines = true})
+    local viasudo = probe.run("sudo", sudoargs,
+                              {lines = true, timeout = PM_TIMEOUT_MS})
     if viasudo.status == "OK" then
         return viasudo, probe.ok("sudo-nopasswd", viasudo.source)
     end
@@ -455,8 +459,22 @@ function _capture_linux()
         "/sys/firmware/acpi/platform_profile")
     m.temperatures = m.gpu_temperature_c
 
-    m.mux_path = probe.match("glxinfo", {"-B"}, "OpenGL renderer string:%s*(.+)",
-                             {lines = true})
+    -- Which GPU actually renders, on a machine that may have two. glxinfo is
+    -- the natural source and also a trap: with no display server answering it
+    -- blocks forever, which is the normal state of a headless runner and of a
+    -- laptop whose session is locked at 3am. Guard on the display being set
+    -- at all, and bound the call even then.
+    local display = os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")
+    if display then
+        m.mux_path = probe.match("glxinfo", {"-B"},
+                                 "OpenGL renderer string:%s*(.+)",
+                                 {lines = true, timeout = 5000})
+    else
+        m.mux_path = probe.unavailable(
+            "no display server reachable: DISPLAY and WAYLAND_DISPLAY are "
+            .. "both unset, so the render path cannot be queried",
+            "glxinfo -B")
+    end
     m.compositor = probe.ok(os.getenv("XDG_SESSION_TYPE") or "unknown",
                             "$XDG_SESSION_TYPE")
     m.thermal_notes = probe.unavailable(
@@ -565,10 +583,17 @@ end
 -- ---------------------------------------------------------------- entry ----
 
 -- Capture the machine manifest. 'opt.profile' forces a profile id; otherwise
--- it is inferred from the host, which is what CI wants.
+-- it is resolved from ci/machines.json, which is what CI wants.
+--
+-- 'opt.force_host' runs another platform's probe set on this machine. Every
+-- probe then fails and reports UNAVAILABLE, which is the point: it exercises
+-- the parsing and nil-handling of a path that would otherwise only ever run
+-- on hardware the author cannot reach. Neither developer can run the other's
+-- platform, so without this the Linux probes would first execute on ci-linux
+-- at 3am. A forced manifest is marked and can never be archived.
 function capture(opt)
     opt = opt or {}
-    local host = os.host()
+    local host = opt.force_host or os.host()
 
     local fields = (host == "macosx") and _capture_macos(opt)
                    or (host == "linux") and _capture_linux()
@@ -580,6 +605,13 @@ function capture(opt)
         host            = host,
         arch            = os.arch(),
     }
+
+    if opt.force_host and opt.force_host ~= os.host() then
+        manifest.smoke_test = ("probe set for %q was forced on a %q host; "
+                               .. "every value here is meaningless and this "
+                               .. "manifest must never be archived")
+                              :format(opt.force_host, os.host())
+    end
 
     if not fields then
         manifest.status = "UNSUPPORTED_HOST"
@@ -655,8 +687,10 @@ function capture(opt)
     }
 
     -- The single field downstream tooling reads to decide whether a bundle
-    -- from this machine may be archived as evidence.
+    -- from this machine may be archived as evidence. A forced-host smoke run
+    -- is never eligible, whatever machine it ran on.
     manifest.evidence_eligible = (registered.role == "qualification")
+                                 and manifest.smoke_test == nil
 
     -- Count what could not be read, so a caller can refuse to treat a
     -- half-empty manifest as a complete one.

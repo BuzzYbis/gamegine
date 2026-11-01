@@ -19,20 +19,31 @@ runs before pushing.
 | Task | Does | Gate |
 | --- | --- | --- |
 | `xmake ci-check` | The whole push tier, in the runner's order | — |
-| `xmake ci-format` | Checks first-party sources against `.clang-format`. `--fix` rewrites them | — |
+| `xmake format` | Formats first-party sources: clang-format, then the BDE pass. Run before pushing. Overrides xmake's built-in `format` plugin | — |
+| `xmake ci-format` | Checks the same, without rewriting: `.clang-format`, then the BDE rules clang-format cannot keep (`// RETURN`, `// IMPLICIT`, banners). `--fix` rewrites them. Also reports the naming rule below, which nothing can rewrite | — |
 | `xmake ci-pins` | Verifies `pins.json` against the machine | **B0.4** |
 | `xmake ci-machine` | Captures this runner's machine manifest | — |
 | `xmake ci-schema` | Validates JSON documents against a schema | — |
 | `xmake ci-bundle` | Validates a result bundle's layout | — |
 | `xmake ci-inventory` | Reports which CI inputs exist yet, and which do not | — |
-| `xmake ci-test` | Runs the CI tooling's own tests | — |
+| `xmake ci-test` | Runs the CI tooling's own tests, and the compile-fail snippets of `ci/test/compile_fail/`: each C++ mistake the headers promise to reject, with a valid twin, built with every compiler found | — |
+| `xmake bench` | Runs a benchmark tier and emits a result bundle | **bench/** |
+| `xmake ci-lua` | Checks the CI Lua for dead code and sandbox traps | — |
+| `xmake ci-tidy` | Static analysis of first-party C++ (clang-tidy) | — |
+| `xmake ci-style` | Previews the output palette in your terminal | — |
+| `xmake ci-unit` | Builds and runs the C++ unit tests, and lists the ones skipped in this build (a death test skips itself when `assert` is compiled out) | — |
+| `xmake ci-coverage` | Line, function and branch coverage of `gamegine/` | — |
+| `xmake ci-coverage-html` | Per-line annotated HTML report, in `build/coverage/html/` | — |
 
 ```bash
 xmake ci-check                              # before pushing
-xmake ci-format --fix                       # after writing code
+xmake format                                # before pushing: clang-format + BDE pass
 xmake ci-machine -o results/B0-A/machine.json
 xmake ci-bundle results/B0-A                # before calling a gate green
 ```
+
+The full list of what to run and check before a commit is
+[doc/commit-checklist.md](../doc/commit-checklist.md).
 
 ---
 
@@ -43,6 +54,7 @@ ci/
 ├── README.md                this file
 ├── pins.json                pinned and recorded inputs        (ci.md §6)
 ├── machines.json            which machine is which, and what its results are worth
+├── fixtures.json            the fixture corpus and its build state
 ├── tasks.lua                xmake task definitions
 ├── lua/
 │   ├── probe.lua            run commands, report honestly
@@ -50,13 +62,38 @@ ci/
 │   ├── pins.lua             pin verification                     (B0.4)
 │   ├── jsonschema.lua       a small JSON Schema subset
 │   ├── bundle.lua           result-bundle layout         (benchmarks.md §6)
-│   └── sources.lua          which files are ours to police
+│   ├── bench.lua            the vg_bench harness
+│   ├── sources.lua          which files are ours to police
+│   ├── lualint.lua          dead code and sandbox traps
+│   ├── formatter.lua        clang-format, then the BDE pass
+│   ├── bdestyle.lua         the BDE rules clang-format cannot keep, and the `_p` naming report
+│   ├── coverage.lua         source-based coverage of gamegine/
+│   ├── style.lua            output readable on any background
+│   └── testing.lua          assertions for the Lua tests
+├── meta/
+│   └── xmake.lua            xmake API types for the language server
+├── test/                    the Lua tests, run by 'xmake ci-test'
 └── schema/
     ├── run-manifest.schema.json      the frozen manifest contract
+    ├── machine-manifest.schema.json  the machine manifest contract
     └── examples/                     committed tripwire fixtures
 ```
 
-`.github/workflows/push.yml` is the push and pull-request tier.
+`.github/workflows/push.yml` is the push and pull-request tier: format, the
+host build and unit tests on Ubuntu and macOS in debug and release, schema,
+pins and shaders. `.github/workflows/tooling.yml` runs the tooling's own tests
+(`ci-test`) and the harness (`ci-machine`, `bench`, `ci-bundle`). They test the
+tooling and not the engine, so they start when `ci/` or `xmake.lua` change,
+every night, and on demand, not on every push. Every job has a timeout, so a
+hang costs minutes and not the six hours GitHub allows.
+
+On Linux, `ci-tidy` runs clang-tidy 23 from pip, like the clang-format of the
+format job. Ubuntu's apt clang-tidy is 18, which cannot read `<expected>`
+against libstdc++ 13 (clang before 19 reports a smaller `__cpp_concepts` than
+libstdc++ asks for). For the same reason `ci-test` names a compiler that cannot
+build the headers of `engine/core` (clang 18 here, and GCC 12, which has no
+`<format>`) and leaves it out of the compile-fail snippets, and fails only if
+none is left.
 
 ---
 
@@ -133,6 +170,265 @@ it predates does not link.
 Both are pinned to the **same commit** and are bumped **together**. A bump of
 either is a content format change: full re-cook, new package hashes, named new
 baseline.
+
+---
+
+## Terminal output
+
+All output goes through `style.lua`, which uses **fixed colours chosen by
+measurement** — not the terminal's palette, and not xmake's tokens.
+
+Both of those delegate the decision. xmake's `${green}` is `38;2;0;255;0`,
+pure RGB at full brightness; the 16-colour codes name a slot the theme
+resolves however it likes. Either way the result depends on the reader's
+setup, and on a light theme both produce text you cannot see.
+
+A colour is legible on white *and* black only if its relative luminance sits
+in a narrow band. Each value was picked for its **worst-case WCAG contrast** —
+the weaker of its two ratios — because that is what decides readability:
+
+| Role | Colour | vs white | vs black | worst |
+| --- | --- | --- | --- | --- |
+| `ok` | `#2E8B2E` | 4.33 | 4.85 | **4.33** |
+| `bad` | `#D1242F` | 5.24 | 4.00 | **4.00** |
+| `warn` | `#9A6700` | 4.87 | 4.31 | **4.31** |
+| `note` | `#1F6FEB` | 4.63 | 4.53 | **4.53** |
+| `dim` | `#6E7781` | 4.55 | 4.62 | **4.55** |
+
+**4.58 is the ceiling.** Contrast against white falls as a colour lightens
+while contrast against black rises, so the best any colour can manage on both
+at once is where those curves cross. Everything here is within 0.3 of that
+limit — there is no better choice available, only different hues.
+
+`dim` is a colour, not the ANSI dim attribute (`ESC[2m`): that attribute
+lightens the foreground, which on a light theme moves text *toward* the
+background.
+
+Two rules the module enforces:
+
+- **Colour is never the only signal.** Every line meaning "this failed" says
+  so in words, so it survives a monochrome terminal, a piped log, and a reader
+  who cannot distinguish red from green.
+- **Lines always close.** `say()` appends a reset whenever it emitted an
+  escape, so a forgotten `${reset}` cannot bleed into the rest of the session.
+
+```bash
+xmake ci-style     # preview the palette in your own terminal
+NO_COLOR=1 ...     # disable colour entirely
+```
+
+---
+
+## File suffix conventions
+
+| Suffix | Is |
+| --- | --- |
+| `<component>.cpp` | library source |
+| `<component>.t.cpp` | unit test |
+| `<component>.b.cpp` | benchmark |
+| `<component>.m.cpp` | an executable's main |
+
+The build keys off these: the library archives `**.cpp` minus the three, the
+test target takes `**.t.cpp` only, benchmarks `**.b.cpp` only. A test beside
+its component is never archived into the library, and a stray `.cpp` in the
+test tree is not silently compiled as a test.
+
+---
+
+## Editor formatting
+
+Two traps cost an evening between them, so both are written down.
+
+**clang-format rejects the whole config on one unknown value**, then falls
+back to LLVM defaults *silently*. `Standard: c++23` is valid in clang-format
+23 and unknown to LLVM 21 — which is what Apple's clangd embeds — so the whole
+project style was ignored in the editor while the CLI was fine. `Standard` is
+now `Latest`, understood by every version for years. Verified: byte-identical
+output under clang-format 23.
+
+**libFormat's line breaking changes between LLVM releases.** Even with a
+config both accept, clangd 21 and clang-format 23 disagree on one wrap, so
+format-on-save and `ci-format --fix` would fight over that line forever. Point
+the editor at the same LLVM the CLI uses:
+
+```json
+// user settings, macOS
+"clangd.path": "/opt/homebrew/opt/llvm/bin/clangd"
+```
+
+With that, clangd wants **zero** edits to a file `ci-format` considers clean.
+
+The general rule: if the editor and `xmake ci-format` disagree, they are
+running different libFormat versions. `ci-format` is the authority — it is
+what the runner uses.
+
+**The same goes for CI, and `ci-format` enforces it.** Ubuntu's apt
+`clang-format` is 18, which indents the continuation line of a wrapped call
+differently from 23, so a runner using it reported four correct test files as
+"needs formatting". The sources are formatted with clang-format **23**
+(`required_major()` in `ci/lua/formatter.lua`), the workflow installs
+`clang-format==23.*` with pip, and `xmake ci-format` stops with the version it
+found and how to install the right one if it is any other major. Change the
+pin in both places together; `ci-test` covers the check.
+
+**Some BDE rules are not clang-format's to keep** (rule numbers from
+`doc/CodingStandards(fromBDE_almost).pdf`):
+
+| Rule | What | Pass behaviour |
+| --- | --- | --- |
+| 11.6 | `// RETURN` on every return other than at the closing brace, right-justified to column 79, at least two spaces after the statement | aligned; with no room, moved to a line of its own (11.6.3), and back up once there is room |
+| 7.4.2 | `// IMPLICIT` on a deliberately implicit constructor | placed exactly like `// RETURN` |
+| 6.1.3, 6.8.3 | class banners indented 25 spaces when the name is under 20 characters, centred otherwise; rules as long as the title | re-indented, rules re-cut |
+| 4.5.1 | `INLINE DEFINITIONS` banner to column 79, its `I` in column 29 | rebuilt |
+
+Every option that might preserve these — `AlignTrailingComments: Kind:
+Leave`, `CommentPragmas`, `ReflowComments: Never` — was tried against
+clang-format 23 and Apple's 21. None keeps the tag columns in either, not
+even for a tag on its own line, nor the banner indentation in 23.
+
+So `xmake format` and `xmake ci-format` run clang-format **and then**
+`ci/lua/bdestyle.lua` (both through `ci/lua/formatter.lua`), which puts
+them back; the pair is idempotent.
+
+**The workflow, in any editor:** let the editor's clangd format on save as
+usual — it will pull tags and banners out of place while you work, which is
+harmless — and run
+
+```sh
+xmake format        # before pushing
+```
+
+`xmake format` is this project's own task: it overrides xmake's built-in
+`format` plugin, which runs clang-format alone and would undo the pass. It
+is the same as `xmake ci-format --fix`. `ci-check` and CI run the check
+form, so a push that skipped it fails on formatting rather than slipping
+through.
+
+The pass places the tags that are there; it does not add a *missing* one.
+
+### The naming rule: `d_` on every data member
+
+The standard's rule 6.5.3: a non-static data member begins with `d_`, a static
+one with `s_`. It has no exception for a plain `struct`, and its own example of
+one (`LinkedList_Link`) has `d_data` and `d_next_p`. So the public data of an
+attribute `struct` is `d_width`, and a call site reads
+`{.d_title = "gamegine", .d_width = 1920}`.
+
+`xmake ci-tidy` enforces it with `readability-identifier-naming`
+(`PrivateMemberPrefix`, `ProtectedMemberPrefix`, `PublicMemberPrefix` and
+`ClassMemberPrefix` in `.clang-tidy`), in tests and benchmarks too. Unlike the
+`_p` rule below it can be fixed by the tool: `xmake ci-tidy --fix` renames the
+member and every use of it.
+
+### The naming rule: `_p` on every pointer member
+
+One rule is ours, not the standard's, and **it is reported, never fixed**:
+a data member that is a pointer, or owns one, ends in `_p` after its prefix.
+The standard keeps `_p` for raw pointers; here a smart pointer takes it too,
+so that `->` on a member shows an indirection whatever its type.
+
+| Member | Takes `_p` |
+| --- | --- |
+| `Producer* d_producer_p`, `const char* d_name_p` | yes |
+| `std::unique_ptr<T>`, `std::shared_ptr<T>`, `std::weak_ptr<T>` | yes, `d_shared_p` |
+| `std::atomic<T*>` | yes |
+| class data (`s_`) of any of those | yes, `s_current_p` |
+| `std::span`, `std::string_view`, `std::optional`, a reference | no, not a pointer |
+| `Producer* d_slots[4]`, `std::array<T*, N>`, `std::vector<std::unique_ptr<T>>` | no, an array or container |
+| constants (`k_`) | no |
+
+`xmake ci-format` and `xmake format` both print each offender as
+`file:line: pointer data member 'd_x' takes a '_p' suffix: 'd_x_p'` and fail:
+a rename has to follow the uses, which no formatter can see. The check
+(`bdestyle.problems`) reads text with no parser, one line at a time, so it
+sees a member declared on a single line (`<type> d_name;`, `= ...;`, `{...};`)
+and nothing else. It only looks for a *missing* suffix: a `_p` on something
+that is not a pointer is not reported.
+
+---
+
+## The warning policy, both languages
+
+C++ builds with `-Wall -Wextra -Wunused -Werror` and is analysed by
+`clang-tidy`. The Lua that drives CI had no equivalent, so `ci-lua` closes
+that gap. It reports three classes:
+
+- **Unused parameters, imports and file-scope constants.** The `-Wunused` of
+  the scripting side.
+- **Calls to globals xmake's sandbox does not provide.** `next`, `select`,
+  `pcall`, `load` and friends exist in plain Lua and are absent here. Every
+  entry on that list was discovered the same way: at run time, in a branch
+  that had not executed yet. `next` hid inside the schema validator until a
+  manifest containing an empty array reached it.
+
+It strips comments before matching, so commented-out code is not reported —
+a checker that cries wolf gets disabled, and a disabled checker catches
+nothing.
+
+`.luarc.json` declares the sandbox's globals for the language server. Without
+it, every `import`, `try`, `raise` and `path` is flagged as undefined and the
+real findings drown.
+
+### clang-tidy
+
+`.clang-tidy` enables the defect-hunting families and disables checks that
+fire on correct, idiomatic code here — each with the reason, in the file.
+Two are worth knowing:
+
+- `performance-enum-size` is **actively wrong** for `Error`: the reason enums
+  must have a `uint16_t` underlying type, because the concept requires it and
+  the packed layout allocates them 16 bits.
+- `bugprone-macro-parentheses` fires on `GAMEGINE_ERROR_TRY_ASSIGN`, where the
+  argument is a whole declaration and `(auto window) = ...` is not valid C++.
+  Suppressed for that macro alone, not globally.
+
+---
+
+## The benchmark harness
+
+```bash
+xmake bench --tier=T1 --out=results/ci/$(git rev-parse --short HEAD)
+```
+
+This is the **R0 skeleton**. It does everything a run does *except measure*,
+because there is no engine to measure yet: it resolves the fixtures, fills the
+manifest from the pinned versions and the machine, lays out the bundle, and
+reports every fixture `NOT_RUN` **with the reason it could not run**.
+
+Standing it up now is the point. The bundle layout and the manifest schema are
+contracts frozen at R0, and every later result is compared against R0's — so
+the thing that writes them wants to exist before the numbers do, not after,
+when the shape is already load-bearing.
+
+It also makes the second half of gate **B0.4** real. `ci-pins` proves the
+versions are pinned; the harness proves they are *recorded in every manifest*,
+which is what the gate actually asks for.
+
+### Where the JSON lives
+
+Bundle assembly is in `bench.lua`, not in the eventual `vg_bench` binary.
+There is **one** implementation of the manifest; two that can disagree is how
+a schema stops describing its own output. When there is an engine, the binary
+measures and hands back its samples — this still assembles the bundle.
+
+### Absent is not zero
+
+Every unmeasured statistic is `null`, never `0`. A p95 of `0 ms` is a
+measurement; a p95 of `null` is the absence of one, and the difference matters
+to every later comparison. A harness that writes zeros produces bundles that
+compare cleanly against real ones and are silently wrong. `ci-test` asserts
+this.
+
+### Fixtures
+
+`fixtures.json` registers the corpus. A fixture whose `build.status` is not
+`built` is reported `NOT_RUN` with its reason carried into the manifest — it
+is never silently omitted, because a fixture that quietly stops being listed
+is a fixture that regresses unnoticed.
+
+At R0 both S0 and S1 are `not_built`, so a run's fixture table doubles as the
+remaining R0 content to-do list, stated in the evidence rather than in
+someone's head.
 
 ---
 

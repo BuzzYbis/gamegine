@@ -11,6 +11,13 @@
 # Apple's toolchain *accepting* that text are different checks, and only the
 # second proves the shader will load on Profile A.
 #
+# The CI tooling's own tests and the benchmark harness are not here: they test
+# the tooling, not the engine, and run in tooling.yml when ci/ changes, every
+# night, and on demand.
+#
+# Every job has a timeout. A hang on a hosted runner otherwise holds it for six
+# hours, and this workflow's target is five minutes.
+#
 # Jobs whose inputs do not exist yet do not silently pass. They print what is
 # missing and what will make them real, because "silent skips are how a
 # backend quietly stops being tested" (ci.md section 4).
@@ -39,8 +46,10 @@ jobs:
   inventory:
     name: inventory
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       has_cpp: ${{ steps.take.outputs.has_cpp }}
+      has_headers: ${{ steps.take.outputs.has_headers }}
       has_shaders: ${{ steps.take.outputs.has_shaders }}
       cpp_sources: ${{ steps.take.outputs.cpp_sources }}
       slang_shaders: ${{ steps.take.outputs.slang_shaders }}
@@ -67,34 +76,31 @@ jobs:
 
   # Formatting is the cheapest check there is, so it runs first and alone.
   format:
-    name: format
+    name: format and lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: '3.1.1'
+      # The sources are formatted with clang-format 23, and other versions
+      # lay code out differently: Ubuntu's apt package is 18, which reports
+      # correct files as unformatted. Same major as CLANG_FORMAT_MAJOR in
+      # ci/lua/formatter.lua, which makes 'ci-format' fail with a clear
+      # message if the two ever disagree.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang-format
+        run: pip install 'clang-format==23.*'
       - name: Check formatting
         run: xmake ci-format
 
-  # CPU fixtures. At R0 these are the CI tooling's own tests -- parsers and
-  # validators that run on machines nobody is watching. The math test vectors,
-  # quantization round-trips and cut-validity tests join them as they land.
-  # No GPU, no engine, so they run on every push.
-  tests:
-    name: CPU fixtures
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: '3.1.1'
-      - name: Run the CI tooling tests
-        run: xmake ci-test
+      # The scripting side of the warning policy. C++ builds with
+      # -Wunused -Werror; the Lua that drives CI gets the same treatment.
+      - name: Check the CI Lua for dead code
+        run: xmake ci-lua
 
   # Every benchmark and cooker manifest validates against the schema.
   # The committed examples are validated too: they are the tripwire for an
@@ -102,6 +108,7 @@ jobs:
   schema:
     name: manifest schema
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -136,6 +143,7 @@ jobs:
     name: pinned inputs (B0.4)
     needs: inventory
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
@@ -153,6 +161,7 @@ jobs:
     name: host build (${{ matrix.os }}, ${{ matrix.mode }})
     needs: inventory
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -162,30 +171,93 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Report that there is nothing to build yet
-        if: ${{ needs.inventory.outputs.has_cpp != 'true' }}
+        if: ${{ needs.inventory.outputs.has_cpp != 'true' && needs.inventory.outputs.has_headers != 'true' }}
         run: |
-          echo "::notice title=Host build not yet active::gamegine/src contains no translation unit, so there is nothing to compile. This job becomes a real check with the first source file from the R0 core/, platform/, rhi/ and backends/vulkan/ deliverables (r0-architecture.md section 4). It is reported, not skipped silently."
+          echo "::notice title=Host build not yet active::gamegine/ contains no source at all, so there is nothing to compile. This job becomes a real check with the first file from the R0 core/, platform/, rhi/ and backends/vulkan/ deliverables (r0-architecture.md section 4). It is reported, not skipped silently."
 
       - uses: xmake-io/github-action-setup-xmake@v1
-        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
         with:
           xmake-version: '3.1.1'
 
+      # xmake's 'vulkansdk' package is system-only: its definition has an
+      # on_fetch and no on_install, so it can never be downloaded. It resolves
+      # in this order -- $VULKAN_SDK, then pkg-config, then /usr on Linux only
+      # -- and a hosted runner satisfies none of them out of the box. Headers
+      # and the loader are enough to compile and link host code, which is all
+      # this tier does; the runners have no GPU to run against anyway.
       - name: Install Linux build dependencies
-        if: ${{ needs.inventory.outputs.has_cpp == 'true' && matrix.os == 'ubuntu-latest' }}
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'ubuntu-latest' }}
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
+            libvulkan-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
             libwayland-dev libxkbcommon-dev ninja-build
 
+      - name: Install macOS build dependencies
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'macos-latest' }}
+        run: |
+          brew install vulkan-headers vulkan-loader
+          # macOS has no /usr fallback in find_vulkansdk, so point VULKAN_SDK
+          # at the Homebrew prefix: it wants <prefix>/lib/libvulkan.dylib and
+          # <prefix>/include/vulkan/vulkan.h, which is exactly how brew links.
+          echo "VULKAN_SDK=$(brew --prefix)" >> "$GITHUB_ENV"
+
+      # Prove the SDK is actually resolvable before configuring. Without this
+      # a resolution failure surfaces as a confusing xmake error attributed to
+      # whatever source file happened to be compiling.
+      - name: Verify Vulkan is resolvable
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            pkg-config --modversion vulkan \
+              || { echo "::error title=Vulkan not resolvable::libvulkan-dev did not provide a pkg-config vulkan module. xmake's vulkansdk package cannot be downloaded, so the host build cannot proceed."; exit 1; }
+          else
+            test -f "$VULKAN_SDK/include/vulkan/vulkan.h" \
+              || { echo "::error title=Vulkan headers missing::No vulkan/vulkan.h under VULKAN_SDK=$VULKAN_SDK"; exit 1; }
+            ls "$VULKAN_SDK/lib/"libvulkan*.dylib \
+              || { echo "::error title=Vulkan loader missing::No libvulkan dylib under VULKAN_SDK=$VULKAN_SDK"; exit 1; }
+          fi
+
       - name: Configure
-        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
         run: xmake config --mode=${{ matrix.mode }} --yes
 
       - name: Build
-        if: ${{ needs.inventory.outputs.has_cpp == 'true' }}
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
         run: xmake build --yes
+
+      # Unit tests run here rather than in their own job because they need the
+      # same Vulkan resolution and the same built tree; a separate job would
+      # pay for both twice.
+      # 'ci-unit' runs the same test binary as 'xmake test', and says what
+      # failed. A failure leaves an annotation naming the tests and what
+      # GoogleTest said, which can be read without logging in to GitHub; it
+      # lists the tests a build skipped, which 'xmake test' counts as passed.
+      - name: Unit tests
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
+        run: xmake ci-unit
+
+      # Static analysis completes the "Format and lint" row of ci.md section
+      # 3. It runs here because clang-tidy needs compile_commands.json, which
+      # only exists after a build. Linux only: the findings are the same on
+      # both platforms and there is no reason to pay for them twice.
+      # clang-tidy from pip, 23 like the clang-format of the format job and the
+      # LLVM the sources are checked with at the desk. Ubuntu's apt package is
+      # 18, which cannot parse <expected> against libstdc++ 13 (clang before 19
+      # reports a __cpp_concepts that libstdc++ finds too small) and so reports
+      # every translation unit as broken.
+      - uses: actions/setup-python@v5
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'ubuntu-latest' && matrix.mode == 'release' }}
+        with:
+          python-version: '3.12'
+      - name: Static analysis
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'ubuntu-latest' && matrix.mode == 'release' }}
+        run: |
+          pip install 'clang-tidy==23.*'
+          xmake ci-tidy
 
   # Slang emits SPIR-V on Linux; Apple's toolchain accepts the MSL on macOS.
   # A kernel that builds for one target and not the other fails here, not at a
@@ -194,6 +266,7 @@ jobs:
     name: shader compile (${{ matrix.target }})
     needs: inventory
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

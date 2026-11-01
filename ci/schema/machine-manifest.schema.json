@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gamegine/ci/schema/machine-manifest.schema.json",
+  "title": "Machine manifest",
+  "description": "Captured at every benchmark run (architecture.md section 2). Every probed field is a record carrying its status and the exact command that produced it, so any number in a result bundle can be reproduced by hand. A field that could not be read is UNAVAILABLE with a reason -- never omitted, never defaulted, never inferred from a spec sheet.",
+  "type": "object",
+  "required": ["schema_version", "captured_at_utc", "host", "arch"],
+
+  "$defs": {
+    "probeRecord": {
+      "type": "object",
+      "required": ["status"],
+      "description": "A single probed value. 'source' is the exact command, so the figure is reproducible; 'reason' is written for someone reading it months later who must decide whether the gap matters.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["OK", "UNAVAILABLE"],
+          "description": "UNAVAILABLE is never a pass (ci.md section 4)."
+        },
+        "value": {
+          "description": "Absent or null when the status is UNAVAILABLE. Never a zero standing in for a missing measurement."
+        },
+        "source": {
+          "type": "string",
+          "description": "The command, file or document the value came from."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Required in spirit whenever status is UNAVAILABLE."
+        }
+      }
+    }
+  },
+
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "captured_at_utc": { "type": "string" },
+    "host": { "type": "string", "enum": ["macosx", "linux", "windows"] },
+    "arch": { "type": "string" },
+
+    "status": {
+      "type": "string",
+      "enum": ["UNSUPPORTED_HOST"],
+      "description": "Present only when no probe set exists for this host."
+    },
+    "reason": { "type": "string" },
+
+    "smoke_test": {
+      "type": "string",
+      "description": "Present only when one platform's probe set was forced on another. Every value is then meaningless and the manifest must never be archived."
+    },
+
+    "machine": {
+      "type": "object",
+      "required": ["id", "role", "known"],
+      "description": "Resolved against ci/machines.json.",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["qualification", "development"],
+          "description": "An unrecognised machine defaults to 'development', because defaulting the other way would let an unknown box quietly produce evidence."
+        },
+        "profile": { "type": ["string", "null"], "enum": ["L", "A", null] },
+        "runs": { "type": "string" },
+        "known": { "type": "boolean" }
+      }
+    },
+
+    "profile": {
+      "type": "object",
+      "properties": {
+        "id": { "type": ["string", "null"], "enum": ["L", "A", null] },
+        "source": { "type": "string" },
+        "claimed_hardware": { "type": ["string", "null"] },
+        "matches_claim": { "type": "boolean" },
+        "checked": {
+          "type": "boolean",
+          "description": "False on a development machine, where the hardware differs by design and the comparison would be noise."
+        },
+        "mismatches": {
+          "type": "array",
+          "description": "What the plan claims versus what the device reports. Recorded, never resolved by overwriting the measured value.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": { "type": "string" },
+              "claimed": {},
+              "reported": {}
+            }
+          }
+        }
+      }
+    },
+
+    "evidence_eligible": {
+      "type": "boolean",
+      "description": "Whether results from this machine may be archived as evidence. False on a development machine and on any forced-host smoke run."
+    },
+
+    "contract": {
+      "type": "object",
+      "description": "Not measured: fixed by architecture.md section 2.",
+      "properties": {
+        "render_target_px": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "reconstruction": { "type": "string", "enum": ["none"] },
+        "required_frame_rate": { "type": ["integer", "null"] }
+      }
+    },
+
+    "fields": {
+      "type": "object",
+      "description": "Hardware and OS probes. Keys vary by host.",
+      "additionalProperties": { "$ref": "#/$defs/probeRecord" }
+    },
+    "toolchain": {
+      "type": "object",
+      "description": "Compiler, SDK and shader-toolchain probes.",
+      "additionalProperties": { "$ref": "#/$defs/probeRecord" }
+    },
+
+    "unavailable": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Dotted paths of every field that could not be read."
+    },
+    "unavailable_count": { "type": "integer", "minimum": 0 }
+  }
+}

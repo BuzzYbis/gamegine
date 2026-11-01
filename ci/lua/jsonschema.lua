@@ -41,9 +41,17 @@ function _json_type(value, expected)
         end
         return "number"
     elseif t == "table" then
-        if expected == "array" and not _is_array(value) and
-           next(value) == nil then
-            return "array"    -- an empty table standing in for []
+        -- 'next' is not available in xmake's sandbox, so emptiness is
+        -- established by attempting one iteration.
+        if expected == "array" and not _is_array(value) then
+            local empty = true
+            for _ in pairs(value) do
+                empty = false
+                break
+            end
+            if empty then
+                return "array"    -- an empty table standing in for []
+            end
         end
         if expected == "object" and _is_array(value) then
             return "array"
