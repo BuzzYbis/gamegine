@@ -31,7 +31,12 @@ package("meshoptimizer")
     on_install(function (package)
         local configs = {}
         configs.kind = package:config("shared") and "shared" or "static"
+        -- The mode rules are what turn the package's release mode into
+        -- optimisation flags. Without them the library builds at -O0 and
+        -- its vertex decoder runs some fifty times slower, which is every
+        -- cook and decode timing B0 records being wrong, not merely slow.
         io.writefile("xmake.lua", [[
+            add_rules("mode.debug", "mode.release")
             set_languages("cxx23")
             target("meshoptimizer")
                 set_kind("$(kind)")

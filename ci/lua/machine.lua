@@ -369,18 +369,33 @@ end
 
 -- ---------------------------------------------------------------- Linux ----
 
+-- Pull KEY=value out of /etc/os-release, whose values may be quoted. The key
+-- must start a line, or NAME would match inside PRETTY_NAME.
+function _os_release(block, key)
+    if block.status ~= "OK" then
+        return block
+    end
+    local value = ("\n" .. block.value):match("\n" .. key .. "=([^\r\n]*)")
+    if not value then
+        return probe.unavailable(
+            ("field %q not present in output"):format(key), block.source)
+    end
+    value = value:trim():gsub("^([\"'])(.*)%1$", "%2")
+    return probe.ok(value, block.source)
+end
+
 function _capture_linux()
     local m = {}
 
     local osrel = probe.run("cat", {"/etc/os-release"}, {lines = true})
-    m.os_name    = _from_block(osrel, "^NAME")
-    m.os_version = _from_block(osrel, "^VERSION_ID")
+    m.os_name    = _os_release(osrel, "NAME")
+    m.os_version = _os_release(osrel, "VERSION_ID")
     m.os_build   = probe.run("uname", {"-v"})
     m.kernel     = probe.run("uname", {"-r"})
 
     local lscpu = _capture("lscpu", {})
     m.cpu_model   = _from_block(lscpu, "Model name")
-    m.cpu_logical = _tonumber_record(_from_block(lscpu, "^CPU%(s%)"))
+    m.cpu_logical = _tonumber_record(_from_block(lscpu, "CPU(s)"))
 
     m.hardware_model = probe.readfile(
         "/sys/devices/virtual/dmi/id/product_name")

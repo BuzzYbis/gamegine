@@ -102,6 +102,88 @@ jobs:
       - name: Check the CI Lua for dead code
         run: xmake ci-lua
 
+  # CPU fixtures. At R0 these are the CI tooling's own tests -- parsers and
+  # validators that run on machines nobody is watching. The math test vectors,
+  # quantization round-trips and cut-validity tests join them as they land.
+  # No GPU, no engine, so they run on every push.
+  tests:
+    name: CPU fixtures (CI tooling)
+    runs-on: ubuntu-latest
+    # The machine capture in machine_test has hung on every Linux runner
+    # until GitHub killed it at six hours. Fail in minutes instead.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+      - name: Run the CI tooling tests
+        run: xmake ci-test
+        # Temporary: xmake prints every process it starts, so the last one
+        # before the hang names the probe that blocks. Remove once fixed.
+        env:
+          XMAKE_PROFILE: stuck
+
+  # The harness, end to end, on every push: capture the machine manifest,
+  # emit a T1 bundle, and validate its layout. No GPU and no engine needed --
+  # at R0 every fixture reports NOT_RUN with its reason, which is exactly what
+  # should be asserted. A harness that stops producing valid bundles is found
+  # here, not at a release boundary when the bundle is the evidence.
+  #
+  # This is also the only place ci-machine and ci-bundle run in CI.
+  harness:
+    name: benchmark harness (T1)
+    runs-on: ${{ matrix.os }}
+    # The Linux capture has hung on every runner until GitHub killed it at
+    # six hours. Fail in minutes instead.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Capture the machine manifest
+        run: xmake ci-machine -o "machine-${{ matrix.os }}.json"
+        # Temporary: xmake prints every process it starts, so the last one
+        # before the hang names the probe that blocks. Remove once fixed.
+        env:
+          XMAKE_PROFILE: stuck
+
+      - name: Emit a T1 bundle
+        run: xmake bench --tier=T1 --out="results/ci/${{ github.sha }}" --no-power
+
+      - name: Validate the bundle layout
+        run: xmake ci-bundle "results/ci/${{ github.sha }}"
+
+      # A hosted runner is not in ci/machines.json, so it must resolve to
+      # 'development' and its bundle must not claim to be evidence. If that
+      # ever inverts, a cloud run could be archived behind a published claim.
+      - name: Assert a cloud runner produces no evidence
+        shell: bash
+        run: |
+          manifest="results/ci/${{ github.sha }}/manifest.json"
+          role=$(grep -o '"machine_role":"[^"]*"' "$manifest" | cut -d'"' -f4)
+          eligible=$(grep -o '"evidence_eligible":[a-z]*' "$manifest" | cut -d: -f2)
+          echo "machine_role=$role evidence_eligible=$eligible"
+          if [ "$role" != "development" ] || [ "$eligible" != "false" ]; then
+            echo "::error title=Cloud runner claimed evidence eligibility::A hosted runner is not qualification hardware. It must resolve to 'development' with evidence_eligible=false, or mock runs can be archived as evidence."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-${{ matrix.os }}
+          path: |
+            results/ci/${{ github.sha }}
+            machine-${{ matrix.os }}.json
+          retention-days: 14
+
   # Every benchmark and cooker manifest validates against the schema.
   # The committed examples are validated too: they are the tripwire for an
   # incompatible edit to a contract frozen at R0.
@@ -179,6 +261,39 @@ jobs:
         if: ${{ needs.inventory.outputs.has_headers == 'true' }}
         with:
           xmake-version: '3.1.1'
+
+      # vg_bench depends on the 'shaders' target, so building it needs the
+      # pinned slangc, which only the Vulkan SDK carries (see the shaders
+      # job). The action also exports VULKAN_SDK: on Linux xmake then resolves
+      # Vulkan from the SDK, and on macOS the Homebrew step below points it
+      # back at Homebrew, so the SDK serves only for slangc there.
+      - name: Install the Vulkan SDK (pinned Slang)
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.341.0
+          cache: true
+
+      - name: Put slangc on PATH
+        if: ${{ needs.inventory.outputs.has_headers == 'true' }}
+        shell: bash
+        run: |
+          slangc=$(find "$VULKAN_SDK" -type f -name slangc -perm -u+x 2>/dev/null | head -n 1)
+          if [ -z "$slangc" ]; then
+            echo "::error title=slangc missing::No slangc under VULKAN_SDK=$VULKAN_SDK; the shaders cannot be built."
+            exit 1
+          fi
+          dirname "$slangc" >> "$GITHUB_PATH"
+
+      # On macOS the shaders target builds MSL through Apple's metal and
+      # metallib, which newer Xcodes ship as a separate component.
+      - name: Make sure the Metal toolchain is installed
+        if: ${{ needs.inventory.outputs.has_headers == 'true' && matrix.os == 'macos-latest' }}
+        run: |
+          if ! xcrun -sdk macosx metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun -sdk macosx metal --version
+          fi
 
       # xmake's 'vulkansdk' package is system-only: its definition has an
       # on_fetch and no on_install, so it can never be downloaded. It resolves
@@ -262,6 +377,13 @@ jobs:
   # Slang emits SPIR-V on Linux; Apple's toolchain accepts the MSL on macOS.
   # A kernel that builds for one target and not the other fails here, not at a
   # gate eighty weeks later.
+  #
+  # The toolchain self-test runs on every push, kernels or not. It compiles
+  # ci/test/fixtures/shaders and checks each outcome -- compiled, declared
+  # unsupported, rejected by Apple, failed -- against real compiler output.
+  # The line between an unsupported probe and a broken one is drawn from
+  # Slang's diagnostic ids, and a compiler that renumbered them would
+  # otherwise let a broken probe pass as unsupported.
   shaders:
     name: shader compile (${{ matrix.target }})
     needs: inventory
@@ -277,14 +399,38 @@ jobs:
             target: msl
     steps:
       - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
 
-      - name: Report that there are no kernels yet
-        if: ${{ needs.inventory.outputs.has_shaders != 'true' }}
+      # The pinned slangc (ci/pins.json) is the build Vulkan SDK 1.4.341.0
+      # ships: upstream tags that commit vulkan-sdk-1.4.341.0, and no Slang
+      # release carries it, so the SDK is how to get exactly that compiler.
+      # Cached, because the SDK is around 300 MB.
+      - name: Install the Vulkan SDK (pinned Slang)
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.341.0
+          cache: true
+
+      - name: Put slangc on PATH
+        shell: bash
         run: |
-          echo "::notice title=Shader compile not yet active::No shaders/**.slang in the tree. This job becomes a real check with the first kernel from the R0 shaders/ deliverable -- one non-trivial kernel compiled and running on both SPIR-V and MSL from a single Slang source (gate B0.1, required). It is reported, not skipped silently."
+          slangc=$(find "$VULKAN_SDK" -type f -name slangc -perm -u+x 2>/dev/null | head -n 1)
+          if [ -z "$slangc" ]; then
+            echo "::error title=slangc missing::No slangc under VULKAN_SDK=$VULKAN_SDK. Nothing in this job can be checked without it, and an absent toolchain is UNAVAILABLE, never a pass."
+            exit 1
+          fi
+          dirname "$slangc" >> "$GITHUB_PATH"
+
+      # Strict on the Slang pin now that the tool is present: a shader hash
+      # from any other compiler describes a different baseline (ci.md
+      # section 6). --tools-optional only covers tools that are absent.
+      - name: Verify the pinned inputs (B0.4)
+        run: xmake ci-pins --tools-optional
 
       - name: Confirm the Metal toolchain is present
-        if: ${{ needs.inventory.outputs.has_shaders == 'true' && matrix.target == 'msl' }}
+        if: ${{ matrix.target == 'msl' }}
         run: |
           # B0.1 is only proven where 'metal' and 'metallib' actually accept
           # the MSL. If the component is missing, say so loudly: a green tick
@@ -293,3 +439,25 @@ jobs:
             echo "::error title=Metal toolchain missing::'metal' is not installed on this runner. Install it with 'xcodebuild -downloadComponent MetalToolchain'. B0.1 cannot be evaluated without it, and an absent toolchain is UNAVAILABLE, never a pass."
             exit 1
           fi
+
+      - name: Toolchain self-test
+        run: xmake ci-shaders --self-test --targets=${{ matrix.target }}
+
+      - name: Report that there are no kernels yet
+        if: ${{ needs.inventory.outputs.has_shaders != 'true' }}
+        run: |
+          echo "::notice title=No kernels yet::No shaders/**.slang in the tree. The toolchain self-test above ran; this job compiles real kernels with the first one from the R0 shaders/ deliverable -- one non-trivial kernel compiled and running on both SPIR-V and MSL from a single Slang source (gate B0.1, required). It is reported, not skipped silently."
+
+      - name: Compile every kernel (B0.1, B0.2)
+        if: ${{ needs.inventory.outputs.has_shaders == 'true' }}
+        run: xmake ci-shaders --targets=${{ matrix.target }} --output=shader-index-${{ matrix.target }}.json
+
+      # The index carries every probe's outcome with its diagnostics and the
+      # toolchain provenance B0.2 asks for, so it is kept even on failure.
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && needs.inventory.outputs.has_shaders == 'true' }}
+        with:
+          name: shader-index-${{ matrix.target }}
+          path: shader-index-${{ matrix.target }}.json
+          if-no-files-found: warn
+          retention-days: 14
