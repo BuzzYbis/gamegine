@@ -75,9 +75,9 @@ cmake-build-*/
 
 # General
 **/.DS_Store
-./idea
-./vscode
-./zed
+.idea/
+.vscode/
+.zed/
 
 # Sample assets downloaded by the "sample-models" target
 sample/models/*
