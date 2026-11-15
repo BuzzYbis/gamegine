@@ -18,6 +18,8 @@ function run(t)
         out        = out,
         tier       = "T1",
         skip_power = true,
+        -- No GPU in the tooling tests; device_probes_test covers the probes.
+        device_probes = false,
         command    = "xmake bench --tier=T1 (test)",
     })
 

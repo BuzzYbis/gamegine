@@ -3,10 +3,12 @@
 --
 -- bench.lua -- the vg_bench harness: run a tier, emit a result bundle.
 --
--- This is the R0 skeleton. It does everything a run does EXCEPT measure,
--- because there is no engine to measure yet: it resolves the fixtures, fills
--- the manifest from the pinned versions and the machine, lays out the bundle,
--- and reports every fixture NOT_RUN with the reason it could not run.
+-- This is the R0 skeleton. It does everything a run does except measure a
+-- fixture, because there is no engine to render one yet: it resolves the
+-- fixtures, fills the manifest from the pinned versions and the machine, lays
+-- out the bundle, and reports every fixture NOT_RUN with the reason it could
+-- not run. What it does measure is the B0 device probes, through the C++
+-- harness vg_bench, whose results it folds into the bundle.
 --
 -- That is the whole point of standing it up now. The bundle layout and the
 -- manifest schema are contracts frozen at R0 (r0-architecture.md section 5)
@@ -23,6 +25,7 @@ import("probe")
 import("pins")
 import("machine")
 import("bundle")
+import("shaders")
 import("core.base.json")
 
 -- Defaults are the documented ones: 1920x1080 native with no reconstruction,
@@ -41,10 +44,11 @@ local DEFAULTS = {
 }
 
 -- Per-tier run shape, from benchmarks.md section 2.
+-- probe_runs is how many timed runs vg_bench takes per probe variant.
 local TIERS = {
-    T1 = {runs = 1, warmup_seconds = 0,  route_seconds = 20},
-    T2 = {runs = 1, warmup_seconds = 60, route_seconds = 120},
-    T3 = {runs = 5, warmup_seconds = 60, route_seconds = 120},
+    T1 = {runs = 1, warmup_seconds = 0,  route_seconds = 20,  probe_runs = 5},
+    T2 = {runs = 1, warmup_seconds = 60, route_seconds = 120, probe_runs = 5},
+    T3 = {runs = 5, warmup_seconds = 60, route_seconds = 120, probe_runs = 20},
 }
 
 function _git_revision()
@@ -181,7 +185,185 @@ function build_manifest(opt, machine_manifest, pin_report, planned)
     }
 end
 
-function _interpretation(manifest, planned)
+-- ------------------------------------------------------------ device probes
+--
+-- The B0 device probes run in the C++ harness, vg_bench, which writes CSV
+-- (run.csv, probes.csv, measurements.csv). The bundle carries them under
+-- samples/device-probes/, and the document B0's evidence names,
+-- device-probes.json (r0-benchmarks.md section 6), is assembled from them
+-- here -- one implementation of the bundle, as above.
+
+-- The backend the device probes run on: the one asked for, else the
+-- platform's own.
+function probe_backend(opt)
+    if opt.backend then
+        return opt.backend
+    end
+    return os.host() == "macosx" and "metal" or "vulkan"
+end
+
+-- Parse CSV as vg_bench writes it: a header row, then one row per line,
+-- a field quoted when it holds a comma, a quote or a line break. Returns
+-- one table per row, keyed by the header's names.
+function parse_csv(text)
+    local rows, row, field = {}, {}, {}
+    local quoted = false
+    local i, n = 1, #text
+    while i <= n do
+        local ch = text:sub(i, i)
+        if quoted then
+            if ch == '"' and text:sub(i + 1, i + 1) == '"' then
+                table.insert(field, '"')
+                i = i + 1
+            elseif ch == '"' then
+                quoted = false
+            else
+                table.insert(field, ch)
+            end
+        elseif ch == '"' then
+            quoted = true
+        elseif ch == "," then
+            table.insert(row, table.concat(field))
+            field = {}
+        elseif ch == "\n" then
+            table.insert(row, table.concat(field))
+            table.insert(rows, row)
+            row, field = {}, {}
+        elseif ch ~= "\r" then
+            table.insert(field, ch)
+        end
+        i = i + 1
+    end
+    if #field > 0 or #row > 0 then
+        table.insert(row, table.concat(field))
+        table.insert(rows, row)
+    end
+
+    local header = table.remove(rows, 1) or {}
+    local records = {}
+    for _, r in ipairs(rows) do
+        local record = {}
+        for c, name in ipairs(header) do
+            record[name] = r[c] or ""
+        end
+        table.insert(records, record)
+    end
+    return records
+end
+
+function _null_if_empty(value)
+    if value == nil or value == "" then
+        return json.null
+    end
+    return value
+end
+
+-- What vg_bench's run.csv says about the run itself rather than the device.
+local RUN_KEYS = {
+    generator = true, backend = true, shader_target = true, runs = true,
+    shader_hash = true, shader_hash_reason = true,
+}
+
+-- The device-probes document for a directory vg_bench wrote: the device and
+-- the toolchain that built the shaders, then every probe with its status
+-- and the values it derived. The raw samples stay in measurements.csv.
+function device_probes(dir)
+    local run = {}
+    for _, r in ipairs(parse_csv(io.readfile(path.join(dir, "run.csv")))) do
+        run[r.key] = r.value
+    end
+
+    local device, toolchain = {}, {}
+    for key, value in pairs(run) do
+        local tool = key:match("^toolchain%.(.+)$")
+        if tool then
+            toolchain[tool] = value
+        elseif not RUN_KEYS[key] then
+            device[key] = value
+        end
+    end
+
+    local derived = {}
+    for _, m in ipairs(parse_csv(io.readfile(
+            path.join(dir, "measurements.csv")))) do
+        if m.sample == "" then
+            derived[m.probe] = derived[m.probe] or {}
+            table.insert(derived[m.probe], {variant = m.variant,
+                                            metric  = m.metric,
+                                            value   = tonumber(m.value),
+                                            unit    = m.unit})
+        end
+    end
+
+    local probes = {}
+    for _, p in ipairs(parse_csv(io.readfile(path.join(dir, "probes.csv")))) do
+        table.insert(probes, {
+            id             = p.probe,
+            kernel         = p.kernel,
+            status         = p.status,
+            unsupported_by = _null_if_empty(p.unsupported_by),
+            reason         = _null_if_empty(p.reason),
+            summary        = _null_if_empty(p.summary),
+            notes          = _null_if_empty(p.notes),
+            measurements   = derived[p.probe] or {},
+        })
+    end
+
+    return {
+        schema_version = 1,
+        status         = "RAN",
+        generator      = "vg_bench, assembled by xmake bench",
+        backend        = run.backend,
+        shader_target  = run.shader_target,
+        shader_hash    = _null_if_empty(run.shader_hash),
+        runs           = tonumber(run.runs),
+        device         = device,
+        toolchain      = toolchain,
+        probes         = probes,
+        samples        = "samples/device-probes/measurements.csv",
+    }
+end
+
+-- Run vg_bench on 'backend' into 'dir' and return the device-probes
+-- document and vg_bench's console output. When the probes cannot run -- no
+-- binary, no GPU, no shader build -- the document says so: a bundle without
+-- probes must not look like one whose probes found nothing.
+function run_device_probes(backend, dir, runs)
+    local function not_run(reason)
+        return {schema_version = 1, status = "NOT_RUN", reason = reason,
+                backend = backend, probes = {}}
+    end
+
+    if backend ~= "vulkan" and backend ~= "metal" then
+        return not_run(("vg_bench runs on vulkan or metal, not %s")
+                       :format(backend)), ""
+    end
+    local binaries = os.files(path.join(os.projectdir(), "build", "**",
+                                        "vg_bench"))
+    if #binaries == 0 then
+        return not_run("vg_bench is not built; run 'xmake build vg_bench'"),
+               ""
+    end
+
+    os.mkdir(dir)
+    -- Exit 0 is all probes passed or unsupported, 1 is some failed: both
+    -- are results. Exit 2 is vg_bench unable to start at all.
+    local record = probe.run(binaries[1],
+                             {"--backend=" .. backend,
+                              "--shaders=" .. path.join(os.projectdir(),
+                                                        "build", "shaders"),
+                              "--out=" .. dir,
+                              "--runs=" .. tostring(runs)},
+                             {lines = true, stream = "both",
+                              accept = {0, 1}, timeout = 1800000})
+    if not probe.available(record) then
+        return not_run(("vg_bench could not run the probes: %s")
+                       :format(record.reason)), ""
+    end
+    return device_probes(dir), record.value
+end
+
+function _interpretation(manifest, planned, probes)
     local lines = {
         ("# %s / %s -- %s"):format(manifest.benchmark, manifest.tier,
                                    manifest.status),
@@ -220,9 +402,37 @@ function _interpretation(manifest, planned)
         tostring(manifest.clusterlod_version)))
 
     table.insert(lines, "")
-    table.insert(lines,
-        "No measurement was taken. Nothing in this bundle is a number, and "
-        .. "nothing in it should be quoted as one.")
+    table.insert(lines, "## Device probes")
+    table.insert(lines, "")
+    if probes and probes.status == "RAN" then
+        table.insert(lines, ("vg_bench on `%s`, shader hash `%s`. "
+                             .. "Details in device-probes.json, every sample "
+                             .. "in samples/device-probes/.")
+                            :format(tostring(probes.backend),
+                                    tostring(probes.shader_hash)))
+        table.insert(lines, "")
+        table.insert(lines, "| Probe | Status | Result |")
+        table.insert(lines, "| --- | --- | --- |")
+        for _, p in ipairs(probes.probes) do
+            local result = p.status == "PASS" and p.summary or p.reason
+            table.insert(lines, ("| %s | `%s` | %s |")
+                                :format(p.id, p.status,
+                                        tostring(result ~= json.null
+                                                 and result or "")))
+        end
+        table.insert(lines, "")
+        table.insert(lines,
+            "The device probes above are measurements. The fixtures are "
+            .. "not: none of them ran, and nothing about them should be "
+            .. "quoted as a number.")
+    else
+        table.insert(lines, ("Not run: %s."):format(
+            probes and tostring(probes.reason) or "not requested"))
+        table.insert(lines, "")
+        table.insert(lines,
+            "No measurement was taken. Nothing in this bundle is a number, "
+            .. "and nothing in it should be quoted as one.")
+    end
     table.insert(lines, "")
     return table.concat(lines, "\n")
 end
@@ -286,6 +496,39 @@ function run(opt)
 
     local manifest = build_manifest(opt, machine_manifest, pin_report, planned)
 
+    -- The device probes, unless the caller turned them off (the CI tooling
+    -- tests do: they must not need a GPU).
+    local probes
+    if opt.device_probes ~= false then
+        local backend = probe_backend(opt)
+        local output
+        probes, output = run_device_probes(
+            backend,
+            path.join(out, "samples", "device-probes"),
+            (TIERS[tier] or TIERS.T1).probe_runs)
+        if output ~= "" then
+            io.writefile(path.join(out, "logs", "vg_bench.log"), output)
+        end
+        io.writefile(path.join(out, "device-probes.json"), json.encode(probes))
+        note("device probes on %s: %s", backend,
+             probes.status == "RAN"
+             and ("%d probe(s)"):format(#probes.probes)
+             or tostring(probes.reason))
+
+        if probes.status == "RAN" then
+            manifest.backend = backend
+            -- Recomputed from the artifacts on disk rather than copied from
+            -- the index, so it describes the bytes vg_bench loaded. vg_bench
+            -- has already failed any kernel whose artifact did not match.
+            local hash = shaders.manifest_hash(backend)
+            if probe.available(hash) then
+                manifest.shader_hash = hash.value
+            else
+                note("shader hash unavailable: %s", hash.reason)
+            end
+        end
+    end
+
     io.writefile(path.join(out, "manifest.json"), json.encode(manifest))
 
     -- Aggregate carries explicit nulls rather than zeros. A p95 of 0 ms is a
@@ -315,7 +558,7 @@ function run(opt)
                  .. "resident_mib,pinned_mib,queue_depth\n")
 
     io.writefile(path.join(out, "interpretation.md"),
-                 _interpretation(manifest, planned))
+                 _interpretation(manifest, planned, probes))
 
     note("bundle written")
     io.writefile(path.join(out, "logs", "bench.log"),
